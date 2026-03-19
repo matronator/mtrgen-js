@@ -130,7 +130,7 @@ export class Generator {
             if (!kv) continue;
             if (!kv.key) continue;
             let value = Parser.parseLiteral(kv.value);
-            if (value === LITERALLY_NULL) value = null;
+            if (value === LITERALLY_NULL) value = String(kv.value);
             entries.push([kv.key, value]);
         }
 

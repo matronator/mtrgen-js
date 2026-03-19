@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it,TestRunner } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -66,8 +66,11 @@ path: assets/js
 defaults:
     name: MyTemplate
     event: DOMContentLoaded
-    id: my-template
-    classes: TEMP
+    id: "my-template"
+    classes: 'TEMP'
+    cond: true
+    cond2: null
+    cond3: "null"
 --- /MTRGEN ---
 
 document.addEventListener('<% event %>', function() {
@@ -77,6 +80,15 @@ document.addEventListener('<% event %>', function() {
     template.classList.add('<% classes="TEMPLATE"|lower %>');
     var clone = document.importNode(templateContent, true);
     document.body.appendChild(clone);
+    <% if $cond %>
+    console.log(<% cond %>);
+    <% endif %>
+    <% if $cond2 %>
+    console.log(<% cond2 %>);
+    <% endif %>
+    <% if $cond3 %>
+    console.log(<% cond3 %>);
+    <% endif %>
 });
 `;
 
@@ -87,6 +99,8 @@ const HEADER_DEFAULTS_TEMPLATE_PARSED = `document.addEventListener('DOMContentLo
     template.classList.add('template');
     var clone = document.importNode(templateContent, true);
     document.body.appendChild(clone);
+    console.log(true);
+    console.log(null);
 });
 `;
 
@@ -190,6 +204,9 @@ class <% commandName|pascalCase %>Command extends BaseGeneratorCommand
             event: "DOMContentLoaded",
             id: "my-template",
             classes: "TEMP",
+            cond: true,
+            cond2: null,
+            cond3: "null",
         });
     });
 

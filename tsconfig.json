@@ -1,0 +1,28 @@
+{
+    "compilerOptions": {
+        "rootDir": ".",
+        "paths": {
+            "@/*": ["./src/*"],
+        },
+        "target": "esnext",
+        "useDefineForClassFields": true,
+        "module": "esnext",
+        "lib": ["ESNext", "DOM"],
+        "moduleResolution": "node",
+        "strict": true,
+        "sourceMap": true,
+        "resolveJsonModule": true,
+        "esModuleInterop": true,
+        "noEmit": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noImplicitReturns": true,
+        "forceConsistentCasingInFileNames": true,
+        "types": ["vite/client", "node"],
+        "declaration": true,
+        "declarationDir": "dist",
+        "listEmittedFiles": true
+    },
+    "include": ["src", "dist/index.d.ts", "dist/mtrgen.d.ts"],
+    "exclude": ["**/*.test.ts", "node_modules", "**/node_modules/**", "/.git/", "/node_modules/", "test/**", ".history/**", "dist/**", "node_modules/.pnpm/vite@8.0.0_@types+node@20.19.37_esbuild@0.27.3_jiti@2.6.1_terser@5.46.0_yaml@2.8.2/node_modules/vite/client.d.ts"]
+}

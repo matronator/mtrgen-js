@@ -1,0 +1,94 @@
+{
+  "name": "mtrgen-js",
+  "version": "0.0.0",
+  "description": "Pars'em and parts of MTRGen ported to TypeScript.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matronator/mtrgen-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/matronator/mtrgen-js/issues"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE.md",
+    "src",
+    "package.json",
+    "tsconfig.json"
+  ],
+  "funding": [
+    {
+      "type": "individual",
+      "url": "https://revolut.me/matronator"
+    },
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/matronator"
+    },
+    {
+      "type": "paypal",
+      "url": "https://paypal.me/matronator"
+    }
+  ],
+  "sponsor": {
+    "url": "https://github.com/sponsors/matronator"
+  },
+  "homepage": "https://github.com/matronator/mtrgen-js#readme",
+  "types": "./dist/mtrgen.d.ts",
+  "main": "./dist/mtrgen.esm.js",
+  "module": "./dist/mtrgen.esm.js",
+  "jsdelivr": "./dist/mtrgen.iife.js",
+  "unpkg": "./dist/mtrgen.iife.js",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/mtrgen.d.ts",
+        "default": "./dist/mtrgen.esm.js"
+      },
+      "require": {
+        "types": "./dist/mtrgen.d.cts",
+        "default": "./dist/mtrgen.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "mtrgen": [
+        "./dist/mtrgen.d.ts"
+      ]
+    }
+  },
+  "typings": "./dist/mtrgen.d.ts",
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build",
+    "prebuild": "rm -rf dist/*",
+    "build": "npm run build:main",
+    "build:main": "tsc && LIB_NAME=mtrgen vite build",
+    "postbuild": "dts-bundle-generator --config ./dts-bundle-generator.config.ts && cp dist/mtrgen.d.ts dist/mtrgen.d.cts",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "upgrade": "upgradeps",
+    "release": "npm run build && np",
+    "version": "auto-changelog -p && git add CHANGELOG.md"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "auto-changelog": "^2.5.0",
+    "dts-bundle-generator": "^9.5.1",
+    "np": "^11.0.2",
+    "terser": "^5.46.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0",
+    "upgradeps": "^2.1.1",
+    "vite": "^8.0.0",
+    "vitest": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

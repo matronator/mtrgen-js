@@ -58,6 +58,23 @@ describe("Parser (conditions)", () => {
         expect(Parser.parseString(template2)).toBe("Hello Amazing World!");
     });
 
+    it("parses elseif blocks", () => {
+        const template = "Hello<% if $state === 'if' %> IF<% elseif $state === 'elseif' %> ELSEIF<% else %> ELSE<% endif %> World!";
+
+        expect(Parser.parseString(template, { state: "if" })).toBe("Hello IF World!");
+        expect(Parser.parseString(template, { state: "elseif" })).toBe("Hello ELSEIF World!");
+        expect(Parser.parseString(template, { state: "other" })).toBe("Hello ELSE World!");
+    });
+
+    it("parses nested elseif chains", () => {
+        const template = "<% if $outer === 'a' %>A<% elseif $outer === 'b' %><% if $inner %>B1<% elseif $fallback %>B2<% else %>B3<% endif %><% else %>C<% endif %>";
+
+        expect(Parser.parseString(template, { outer: "a", inner: false, fallback: false })).toBe("A");
+        expect(Parser.parseString(template, { outer: "b", inner: true, fallback: false })).toBe("B1");
+        expect(Parser.parseString(template, { outer: "b", inner: false, fallback: true })).toBe("B2");
+        expect(Parser.parseString(template, { outer: "c", inner: false, fallback: false })).toBe("C");
+    });
+
     it("parses nested if/else", () => {
         const template1 = "Hello<% if false %> Amazing<% else %> Cruel<% if true %> World!<% endif %><% endif %>";
         const template2 = "Hello<% if true %> Amazing<% else %> Cruel<% if false %> World!<% endif %><% endif %>";

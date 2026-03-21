@@ -1,12 +1,8 @@
-export const HEADER_PATTERN = /^--- MTRGEN ---(.+)--- \/MTRGEN ---/ms;
-
-export interface TemplateHeader {
-    name: string;
-    filename: string;
-    path: string;
-    defaults?: TemplateDefaults;
-}
-
-export type DefaultValue = string|boolean|number|null;
-
-export type TemplateDefaults = Record<string, DefaultValue>;
+export {
+    HEADER_BLOCK_REMOVE_RE,
+    HEADER_PATTERN,
+    TemplateHeaders,
+    type DefaultValue,
+    type TemplateDefaults,
+    type TemplateHeader,
+} from "../template/header";

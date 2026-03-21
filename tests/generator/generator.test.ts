@@ -1,4 +1,4 @@
-import { describe, expect, it,TestRunner } from "vitest";
+import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -102,6 +102,26 @@ const HEADER_DEFAULTS_TEMPLATE_PARSED = `document.addEventListener('DOMContentLo
     console.log(true);
     console.log(null);
 });
+`;
+
+const COMPLEX_DEFAULTS_TEMPLATE = `--- MTRGEN ---
+name: complex-defaults
+filename: <% name="LocalFile" %>.js
+path: assets/<% meta.folder="inline-folder" %>
+defaults:
+    name: "GlobalFile"
+    branch: "elseif"
+    list: [1, "string", true, null, "whatever"]
+    meta: {folder: "global-folder", nested: {enabled: true, label: 'lol'}}
+--- /MTRGEN ---
+
+name=<% name="LocalBody" %>
+folder=<% meta.folder %>
+label=<% meta.nested.label %>
+second=<% list[1] %>
+third=<% list[2] %>
+fourth=<% list[3] %>
+<% if $branch === "if" %>IF<% elseif $branch === "elseif" %>ELSEIF<% else %>ELSE<% endif %>
 `;
 
 function withTempDir<T>(fn: (tmpDir: string) => T): T {
@@ -221,4 +241,56 @@ class <% commandName|pascalCase %>Command extends BaseGeneratorCommand
         const outPath = path.join(tmpDir, "assets/js/MyTemplate.js");
         expect(readFileSync(outPath, "utf8")).toBe(HEADER_DEFAULTS_TEMPLATE_PARSED);
     }));
+
+    it("supports array and object defaults in the header", () => {
+        expect(Generator.getDefaultArguments(COMPLEX_DEFAULTS_TEMPLATE)).toEqual({
+            name: "GlobalFile",
+            branch: "elseif",
+            list: [1, "string", true, null, "whatever"],
+            meta: {
+                folder: "global-folder",
+                nested: {
+                    enabled: true,
+                    label: "lol",
+                },
+            },
+        });
+    });
+
+    it("prefers local inline defaults over global header defaults", () => {
+        const generated = Generator.parseTemplate(COMPLEX_DEFAULTS_TEMPLATE);
+
+        expect(generated.filePath).toBe("assets/inline-folder/LocalFile.js");
+        expect(generated.contents).toBe(`name=LocalBody
+folder=global-folder
+label=lol
+second=string
+third=true
+fourth=
+ELSEIF`);
+    });
+
+    it("prefers explicit arguments over local and global defaults", () => {
+        const generated = Generator.parseTemplate(COMPLEX_DEFAULTS_TEMPLATE, {
+            name: "UserFile",
+            meta: {
+                folder: "user-folder",
+                nested: {
+                    enabled: false,
+                    label: "user-label",
+                },
+            },
+            branch: "if",
+            list: [1, "custom", false, "value"],
+        });
+
+        expect(generated.filePath).toBe("assets/user-folder/UserFile.js");
+        expect(generated.contents).toBe(`name=UserFile
+folder=user-folder
+label=user-label
+second=custom
+third=false
+fourth=value
+IF`);
+    });
 });

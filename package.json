@@ -1,7 +1,8 @@
 {
-  "name": "mtrgen-js",
+  "name": "mtrgen",
   "version": "0.0.0",
   "description": "Pars'em and parts of MTRGen ported to TypeScript.",
+  "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,40 +37,47 @@
     "url": "https://github.com/sponsors/matronator"
   },
   "homepage": "https://github.com/matronator/mtrgen-js#readme",
-  "types": "./dist/mtrgen.d.ts",
-  "main": "./dist/mtrgen.esm.js",
-  "module": "./dist/mtrgen.esm.js",
-  "jsdelivr": "./dist/mtrgen.iife.js",
-  "unpkg": "./dist/mtrgen.iife.js",
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "exports": {
     ".": {
-      "import": {
-        "types": "./dist/mtrgen.d.ts",
-        "default": "./dist/mtrgen.esm.js"
-      },
-      "require": {
-        "types": "./dist/mtrgen.d.cts",
-        "default": "./dist/mtrgen.cjs"
-      }
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./parser": {
+      "types": "./dist/parser.d.ts",
+      "browser": "./dist/parser.js",
+      "import": "./dist/parser.js",
+      "require": "./dist/parser.cjs"
+    },
+    "./generator": {
+      "types": "./dist/generator.d.ts",
+      "import": "./dist/generator.js",
+      "require": "./dist/generator.cjs"
     },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
-      "mtrgen": [
-        "./dist/mtrgen.d.ts"
+      "parser": [
+        "./dist/parser.d.ts"
+      ],
+      "generator": [
+        "./dist/generator.d.ts"
       ]
     }
   },
-  "typings": "./dist/mtrgen.d.ts",
+  "typings": "./dist/index.d.ts",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build",
     "prebuild": "rm -rf dist/*",
     "build": "npm run build:main",
-    "build:main": "tsc && LIB_NAME=mtrgen vite build",
-    "postbuild": "dts-bundle-generator --config ./dts-bundle-generator.config.ts && cp dist/mtrgen.d.ts dist/mtrgen.d.cts",
+    "build:main": "tsc -p tsconfig.json --noEmit && vite build",
+    "postbuild": "dts-bundle-generator --config ./dts-bundle-generator.config.cjs && node -e \"const fs = require('node:fs'); for (const name of ['index', 'parser', 'generator']) fs.copyFileSync('dist/' + name + '.d.ts', 'dist/' + name + '.d.cts');\"",
     "test": "vitest",
     "test:coverage": "vitest --coverage",
     "upgrade": "upgradeps",

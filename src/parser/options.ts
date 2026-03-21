@@ -1,8 +1,11 @@
+import type { TemplateDefaults } from "../template/header";
+
 export interface ParserOptions {
-    strict: boolean;
-    patterns: PatternOptions;
+    strict?: boolean;
+    patterns?: PatternOptions;
     trimBeforeBlocks?: boolean;
     trimAfterBlocks?: boolean;
+    templateDefaults?: TemplateDefaults;
 }
 
 export interface PatternOptions {
@@ -14,4 +17,5 @@ export interface PatternOptions {
 export const DefaultOptions: ParserOptions = {
     strict: true,
     patterns: {},
+    templateDefaults: {},
 };

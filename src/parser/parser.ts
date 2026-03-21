@@ -1,11 +1,17 @@
 import { DefaultOptions, ParserOptions } from "./options";
 import type { ConditionMatch } from "./matches";
-import { Filters } from './filters';
-import { DefaultValue } from "@/generator/header";
+import { Filters } from "./filters";
+import { TemplateHeaders, type DefaultValue, type TemplateDefaults, type TemplateHeader } from "../template/header";
+import { INVALID_TEMPLATE_LITERAL, parseTemplateLiteral } from "../template/literal";
 
-export const LITERALLY_NULL = "⚠︎__:-␀LITERALLY_NULL␀-:__⚠︎" as const;
+export const LITERALLY_NULL = Symbol("LITERALLY_NULL");
 
 export type ParserArgs = Record<string, unknown> | Array<Record<string, unknown>>;
+
+type ConditionBranch = {
+    conditionMatch: RegExpExecArray | null;
+    content: string;
+};
 
 export class Parser {
     public static VARIABLE_PATTERN = /<%\s?((?!endif|else)[a-zA-Z0-9_]+)(=.*?)?(\|([a-zA-Z0-9_]+?)(?:\:(?:(?:\\?\'|\\?")?.?(?:\\?\'|\\?")?,?)+?)*?)?\s?%>/m;
@@ -14,7 +20,8 @@ export class Parser {
 
     public static COMMENT_PATTERN = /<#\s?(.*?)\s?#>/ms;
 
-    static #LITERALLY_NULL = LITERALLY_NULL;
+    static #CONDITION_BRANCH_PATTERN = /(?<all><%\s?(?<keyword>if|elseif)\s(?<condition>(?<negation>!?)(?<left>\S+?)(?:\s*(?<operator>(?:<=|<|===|==|>=|>|!==|!=))\s*(?<right>.+?))?)\s?%>\n?)/m;
+    static #BLOCK_TAG_PATTERN = /<%\s?(elseif|if|else|endif)\b.*?%>\n?/m;
 
     public static parseString(text: string, args?: ParserArgs, strict?: boolean): string;
     public static parseString(text: string, args?: ParserArgs, options?: ParserOptions): string;
@@ -24,13 +31,30 @@ export class Parser {
 
         const normalizedOptions = Parser.#normalizeOptions(options);
         const argsList = Parser.#normalizeArgs(args);
+        const header = TemplateHeaders.has(text) ? TemplateHeaders.parse(text) : undefined;
+        const templateDefaults = {
+            ...(normalizedOptions.templateDefaults ?? {}),
+            ...(header?.defaults ?? {}),
+        };
 
-        let parsed = text;
+        let parsed = header ? TemplateHeaders.strip(text) : text;
         parsed = Parser.removeComments(parsed, normalizedOptions);
-        parsed = Parser.parseConditions(parsed, argsList, 0, normalizedOptions);
-        parsed = Parser.parseVariables(parsed, argsList, normalizedOptions);
+        parsed = Parser.parseConditions(parsed, [...argsList, templateDefaults], 0, normalizedOptions);
+        parsed = Parser.parseVariables(parsed, argsList, templateDefaults, normalizedOptions);
 
         return parsed;
+    }
+
+    public static getTemplateHeader(input: string): TemplateHeader {
+        return TemplateHeaders.parse(input);
+    }
+
+    public static getDefaultArguments(input: string): TemplateDefaults {
+        return TemplateHeaders.getDefaults(input);
+    }
+
+    public static stripTemplateHeader(input: string): string {
+        return TemplateHeaders.strip(input);
     }
 
     public static removeComments(text: string, options: ParserOptions = DefaultOptions): string {
@@ -50,75 +74,92 @@ export class Parser {
             if (!conditionMatch) break;
 
             const conditionTagStart = conditionMatch.index;
-            const conditionLength = conditionMatch[0].length;
             const conditionStart = Parser.#lineStartIfWhitespaceOnly(parsed, conditionTagStart);
-            const insideBlockStart = conditionTagStart + conditionLength;
+            const insideBlockStart = conditionTagStart + conditionMatch[0].length;
 
-            const conditionResult = Parser.#getConditionResult(conditionMatch, args);
-
-            let hasElse = false;
-            let elseTagStart: number | null = null;
-            let elseTagLength: number | null = null;
             let endifTagStart: number | null = null;
             let endifTagLength: number | null = null;
-
+            let currentBranchStart = insideBlockStart;
+            let currentConditionMatch: RegExpExecArray | null = conditionMatch;
             let nestedOffset = insideBlockStart;
             let nestedIfCount = 0;
+            const branches: ConditionBranch[] = [];
 
-            const tagPattern = /<%\s?(if|else|endif)\s?.*?%>\n?/m;
             while (true) {
-                const tagMatch = Parser.#execFrom(parsed, tagPattern, nestedOffset);
+                const tagMatch = Parser.#execFrom(parsed, Parser.#BLOCK_TAG_PATTERN, nestedOffset);
                 if (!tagMatch) break;
 
-                const tag = tagMatch[1] as "if" | "else" | "endif";
+                const tag = tagMatch[1] as "elseif" | "if" | "else" | "endif";
                 const tagStart = tagMatch.index;
 
                 if (tag === "if") {
                     nestedIfCount++;
-                } else if (tag === "endif") {
-                    if (nestedIfCount === 0) {
-                        endifTagStart = tagStart;
-                        endifTagLength = tagMatch[0].length;
-                        break;
-                    }
-                    nestedIfCount--;
-                } else if (tag === "else" && nestedIfCount === 0) {
-                    hasElse = true;
-                    elseTagStart = tagStart;
-                    elseTagLength = tagMatch[0].length;
+                    nestedOffset = tagStart + tagMatch[0].length;
+                    continue;
                 }
 
-                nestedOffset = tagStart + tagMatch[0].length;
+                if (tag === "endif") {
+                    if (nestedIfCount > 0) {
+                        nestedIfCount--;
+                        nestedOffset = tagStart + tagMatch[0].length;
+                        continue;
+                    }
+
+                    endifTagStart = tagStart;
+                    endifTagLength = tagMatch[0].length;
+                    const branchEnd = Parser.#lineStartIfWhitespaceOnly(parsed, tagStart);
+                    branches.push({
+                        conditionMatch: currentConditionMatch,
+                        content: parsed.slice(currentBranchStart, branchEnd),
+                    });
+                    break;
+                }
+
+                if (nestedIfCount > 0) {
+                    nestedOffset = tagStart + tagMatch[0].length;
+                    continue;
+                }
+
+                const branchEnd = Parser.#lineStartIfWhitespaceOnly(parsed, tagStart);
+                branches.push({
+                    conditionMatch: currentConditionMatch,
+                    content: parsed.slice(currentBranchStart, branchEnd),
+                });
+
+                currentConditionMatch = tag === "elseif"
+                    ? Parser.#matchConditionBranchTag(tagMatch[0])
+                    : null;
+                if (tag === "elseif" && !currentConditionMatch) {
+                    throw new Error(`Invalid <% elseif %> tag: ${tagMatch[0]}`);
+                }
+
+                currentBranchStart = tagStart + tagMatch[0].length;
+                nestedOffset = currentBranchStart;
             }
 
             if (endifTagStart === null || endifTagLength === null) {
                 throw new Error("Missing <% endif %> tag.");
             }
 
-            const endifLineStart = Parser.#lineStartIfWhitespaceOnly(parsed, endifTagStart);
             const replaceEnd = endifTagStart + endifTagLength;
             const replaceLength = replaceEnd - conditionStart;
+            const replacement = branches.find((branch) =>
+                branch.conditionMatch === null || Parser.#getConditionResult(branch.conditionMatch, args),
+            )?.content ?? "";
 
-            if (hasElse) {
-                if (elseTagStart === null || elseTagLength === null) {
-                    throw new Error("Internal error: else tag was not fully captured.");
-                }
-                const elseLineStart = Parser.#lineStartIfWhitespaceOnly(parsed, elseTagStart);
-                const insideBlock = parsed.slice(insideBlockStart, elseLineStart);
-                const elseBlock = parsed.slice(elseTagStart + elseTagLength, endifLineStart);
-                parsed = Parser.#replaceRange(parsed, conditionStart, replaceLength, conditionResult ? insideBlock : elseBlock);
-            } else {
-                const insideBlock = parsed.slice(insideBlockStart, endifLineStart);
-                parsed = Parser.#replaceRange(parsed, conditionStart, replaceLength, conditionResult ? insideBlock : "");
-            }
-
+            parsed = Parser.#replaceRange(parsed, conditionStart, replaceLength, replacement);
             offset = conditionStart;
         }
 
         return parsed;
     }
 
-    public static parseVariables(text: string, args: Array<Record<string, unknown>>, options: ParserOptions = DefaultOptions): string {
+    public static parseVariables(
+        text: string,
+        args: Array<Record<string, unknown>>,
+        templateDefaults: TemplateDefaults = {},
+        options: ParserOptions = DefaultOptions,
+    ): string {
         const tagPattern = /<%\s*([\s\S]*?)\s*%>/m;
         let parsed = text;
         let offset = 0;
@@ -132,17 +173,22 @@ export class Parser {
             const start = match.index;
             const length = full.length;
 
-            if (!inner || inner.startsWith("if ") || inner === "else" || inner.startsWith("else ") || inner === "endif" || inner.startsWith("endif ")) {
+            if (!inner || inner.startsWith("if ") || inner.startsWith("elseif ") || inner === "else" || inner.startsWith("else ") || inner === "endif" || inner.startsWith("endif ")) {
                 offset = start + length;
                 continue;
             }
 
-            const replacement = Parser.#evaluateVariableExpression(inner, args, options);
+            const replacement = Parser.#evaluateVariableExpression(inner, args, templateDefaults, options);
             parsed = Parser.#replaceRange(parsed, start, length, replacement);
             offset = start + replacement.length;
         }
 
         return parsed;
+    }
+
+    static parseLiteral(raw: string): DefaultValue | typeof LITERALLY_NULL {
+        const parsed = parseTemplateLiteral(raw.trim());
+        return parsed === INVALID_TEMPLATE_LITERAL ? LITERALLY_NULL : parsed;
     }
 
     static #replaceRange(text: string, start: number, length: number, replacement: string): string {
@@ -165,13 +211,16 @@ export class Parser {
         return re.exec(text);
     }
 
+    static #matchConditionBranchTag(tag: string): RegExpExecArray | null {
+        return Parser.#CONDITION_BRANCH_PATTERN.exec(tag);
+    }
+
     static #getConditionResult(match: RegExpExecArray, args: Array<Record<string, unknown>>): boolean {
         const groups = (match.groups ?? {}) as ConditionMatch;
         const leftToken = groups.left ?? "";
         const negated = (groups.negation ?? "") === "!";
 
         const leftValue = Parser.#resolveToken(leftToken, args);
-
         const operator = groups.operator;
         if (!operator) {
             const truthy = Boolean(leftValue);
@@ -226,15 +275,17 @@ export class Parser {
     static #toNumberOrNull(value: unknown): number | null {
         if (typeof value === "number" && Number.isFinite(value)) return value;
         if (typeof value !== "string") return null;
+
         const trimmed = value.trim();
         if (!trimmed) return null;
+
         const asNumber = Number(trimmed);
         return Number.isFinite(asNumber) ? asNumber : null;
     }
 
     static #resolveToken(token: string, args: Array<Record<string, unknown>>): unknown {
         const literal = Parser.parseLiteral(token);
-        if (literal !== Parser.#LITERALLY_NULL) return literal;
+        if (literal !== LITERALLY_NULL) return literal;
 
         let keyPath = token.trim();
         if (!keyPath) return undefined;
@@ -261,28 +312,8 @@ export class Parser {
         return current;
     }
 
-    static parseLiteral(raw: string): DefaultValue | typeof LITERALLY_NULL {
-        const value = raw.trim();
-        if (!value) return Parser.#LITERALLY_NULL;
-
-        if (value === "null") return null;
-        if (value === "true") return true;
-        if (value === "false") return false;
-
-        if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
-            const inner = value.slice(1, -1);
-            return inner.replace(/\\(['"])/g, "$1");
-        }
-
-        const asNumber = Number(value);
-        if (Number.isFinite(asNumber) && value !== "") return asNumber;
-
-        return Parser.#LITERALLY_NULL;
-    }
-
     static #normalizeArgs(args: ParserArgs): Array<Record<string, unknown>> {
-        if (Array.isArray(args)) return args;
-        return [args];
+        return Array.isArray(args) ? args : [args];
     }
 
     static #normalizeOptions(options: boolean | ParserOptions): ParserOptions {
@@ -292,11 +323,20 @@ export class Parser {
             ...DefaultOptions,
             ...options,
             patterns: { ...DefaultOptions.patterns, ...(options.patterns ?? {}) },
+            templateDefaults: {
+                ...(DefaultOptions.templateDefaults ?? {}),
+                ...(options.templateDefaults ?? {}),
+            },
         };
     }
 
-    static #evaluateVariableExpression(expression: string, args: Array<Record<string, unknown>>, options: ParserOptions): string {
-        const [variablePart, ...filterParts] = expression.split("|").map((s) => s.trim()).filter(Boolean);
+    static #evaluateVariableExpression(
+        expression: string,
+        args: Array<Record<string, unknown>>,
+        templateDefaults: TemplateDefaults,
+        options: ParserOptions,
+    ): string {
+        const [variablePart, ...filterParts] = expression.split("|").map((part) => part.trim()).filter(Boolean);
         if (!variablePart) return "";
 
         const equalsIndex = variablePart.indexOf("=");
@@ -306,16 +346,17 @@ export class Parser {
         const defaultRaw = equalsIndex === -1 ? undefined : variablePart.slice(equalsIndex + 1);
         const hasDefault = defaultRaw !== undefined;
 
-        const resolved = Parser.#resolveToken(variableName, args);
-        let value: unknown = resolved;
+        let value = Parser.#resolveToken(variableName, args);
+        if (value === undefined && hasDefault) {
+            value = Parser.#parseDefaultValue(defaultRaw ?? "", options);
+        }
+        if (value === undefined) {
+            value = Parser.#resolveToken(variableName, [templateDefaults]);
+        }
 
         if (value === undefined) {
-            if (!hasDefault) {
-                if (options.strict) throw new Error(`Unknown variable "${variableName}".`);
-                value = "";
-            } else {
-                value = Parser.#parseDefaultValue(defaultRaw ?? "", options);
-            }
+            if (options.strict) throw new Error(`Unknown variable "${variableName}".`);
+            value = "";
         }
 
         for (const filterExpression of filterParts) {
@@ -332,28 +373,29 @@ export class Parser {
 
         const base = baseMatch[0];
         const segments: Array<string | number> = [];
+        let index = base.length;
 
-        let i = base.length;
-        while (i < trimmed.length) {
-            const ch = trimmed[i];
-            if (ch === ".") {
-                i++;
-                const propMatch = /^[a-zA-Z0-9_]+/.exec(trimmed.slice(i));
+        while (index < trimmed.length) {
+            const current = trimmed[index];
+            if (current === ".") {
+                index++;
+                const propMatch = /^[a-zA-Z0-9_]+/.exec(trimmed.slice(index));
                 if (!propMatch) break;
                 segments.push(propMatch[0]);
-                i += propMatch[0].length;
+                index += propMatch[0].length;
                 continue;
             }
 
-            if (ch === "[") {
-                const close = trimmed.indexOf("]", i + 1);
+            if (current === "[") {
+                const close = trimmed.indexOf("]", index + 1);
                 if (close === -1) break;
-                const inside = trimmed.slice(i + 1, close).trim();
+
+                const inside = trimmed.slice(index + 1, close).trim();
                 if (/^\d+$/.test(inside)) {
                     segments.push(Number(inside));
                 } else if (
                     (inside.startsWith("'") && inside.endsWith("'")) ||
-                    (inside.startsWith('"') && inside.endsWith('"'))
+                    (inside.startsWith("\"") && inside.endsWith("\""))
                 ) {
                     segments.push(inside.slice(1, -1).replace(/\\(['"])/g, "$1"));
                 } else if (inside.length > 0) {
@@ -361,7 +403,8 @@ export class Parser {
                 } else {
                     break;
                 }
-                i = close + 1;
+
+                index = close + 1;
                 continue;
             }
 
@@ -376,7 +419,7 @@ export class Parser {
         if (trimmed === "") return "";
 
         const parsed = Parser.parseLiteral(trimmed);
-        if (parsed !== Parser.#LITERALLY_NULL) return parsed;
+        if (parsed !== LITERALLY_NULL) return parsed;
 
         if (options.strict) throw new Error(`Invalid default value "${raw}".`);
         return trimmed;
@@ -386,9 +429,9 @@ export class Parser {
         const trimmed = filterExpression.trim();
         if (!trimmed) return value;
 
-        const [nameRaw, argRaw] = trimmed.split(":");
-        const name = nameRaw.trim();
-        const args = argRaw === undefined ? [] : Parser.#parseFilterArgs(argRaw);
+        const separatorIndex = trimmed.indexOf(":");
+        const name = (separatorIndex === -1 ? trimmed : trimmed.slice(0, separatorIndex)).trim();
+        const args = separatorIndex === -1 ? [] : Parser.#parseFilterArgs(trimmed.slice(separatorIndex + 1));
 
         if (!Filters.has(name)) {
             if (options.strict) throw new Error(`Unknown filter "${name}".`);
@@ -410,48 +453,67 @@ export class Parser {
         let inSingle = false;
         let inDouble = false;
         let escaping = false;
+        let bracketDepth = 0;
+        let braceDepth = 0;
 
-        for (const ch of raw) {
+        for (const char of raw) {
             if (escaping) {
-                current += ch;
+                current += char;
                 escaping = false;
                 continue;
             }
-            if (ch === "\\") {
+
+            if (char === "\\") {
                 escaping = true;
-                current += ch;
+                current += char;
                 continue;
             }
-            if (ch === "'" && !inDouble) {
+
+            if (char === "'" && !inDouble) {
                 inSingle = !inSingle;
-                current += ch;
+                current += char;
                 continue;
             }
-            if (ch === '"' && !inSingle) {
+
+            if (char === "\"" && !inSingle) {
                 inDouble = !inDouble;
-                current += ch;
+                current += char;
                 continue;
             }
-            if (ch === "," && !inSingle && !inDouble) {
-                tokens.push(current.trim());
-                current = "";
-                continue;
+
+            if (!inSingle && !inDouble) {
+                if (char === "[") bracketDepth++;
+                if (char === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+                if (char === "{") braceDepth++;
+                if (char === "}") braceDepth = Math.max(0, braceDepth - 1);
+
+                if (char === "," && bracketDepth === 0 && braceDepth === 0) {
+                    tokens.push(current.trim());
+                    current = "";
+                    continue;
+                }
             }
-            current += ch;
+
+            current += char;
         }
 
-        if (current.trim() !== "" || raw.endsWith(",")) tokens.push(current.trim());
+        if (current.trim() !== "" || raw.endsWith(",")) {
+            tokens.push(current.trim());
+        }
 
-        return tokens.map((t) => {
-            const parsed = Parser.parseLiteral(t);
-            if (parsed !== Parser.#LITERALLY_NULL) return parsed;
+        return tokens.map((token) => {
+            const parsed = Parser.parseLiteral(token);
+            if (parsed !== LITERALLY_NULL) return parsed;
 
-            const maybeStr = t.trim();
-            if ((maybeStr.startsWith("'") && maybeStr.endsWith("'")) || (maybeStr.startsWith('"') && maybeStr.endsWith('"'))) {
-                return maybeStr.slice(1, -1).replace(/\\(['"])/g, "$1");
+            const maybeString = token.trim();
+            if (
+                (maybeString.startsWith("'") && maybeString.endsWith("'")) ||
+                (maybeString.startsWith("\"") && maybeString.endsWith("\""))
+            ) {
+                return maybeString.slice(1, -1).replace(/\\(['"])/g, "$1");
             }
 
-            return maybeStr;
+            return maybeString;
         });
     }
 

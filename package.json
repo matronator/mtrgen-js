@@ -1,9 +1,12 @@
 {
   "name": "mtrgen",
-  "version": "0.0.0",
-  "description": "Pars'em and parts of MTRGen ported to TypeScript.",
+  "version": "1.0.0",
+  "description": "Template-driven file generator for Node.js with a reusable parser API and CLI.",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "mtrgen": "./bin/mtrgen.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/matronator/mtrgen-js.git"
@@ -13,11 +16,15 @@
   },
   "files": [
     "dist",
-    "README.md",
-    "LICENSE.md",
-    "src",
-    "package.json",
-    "tsconfig.json"
+    "bin"
+  ],
+  "keywords": [
+    "template",
+    "generator",
+    "scaffolding",
+    "cli",
+    "codegen",
+    "parser"
   ],
   "funding": [
     {
@@ -78,10 +85,13 @@
     "build": "npm run build:main",
     "build:main": "tsc -p tsconfig.json --noEmit && vite build",
     "postbuild": "dts-bundle-generator --config ./dts-bundle-generator.config.cjs && node -e \"const fs = require('node:fs'); for (const name of ['index', 'parser', 'generator']) fs.copyFileSync('dist/' + name + '.d.ts', 'dist/' + name + '.d.cts');\"",
-    "test": "vitest",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:coverage": "vitest --coverage",
+    "pack:check": "npm pack --dry-run",
     "upgrade": "upgradeps",
     "release": "npm run build && np",
+    "release:preview": "npm run build && np --preview",
     "version": "auto-changelog -p && git add CHANGELOG.md"
   },
   "devDependencies": {
@@ -97,6 +107,10 @@
     "vitest": "^4.1.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "np": {
+    "branch": "main",
+    "packageManager": "pnpm"
   }
 }

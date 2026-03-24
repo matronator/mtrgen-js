@@ -8,6 +8,7 @@ const entries = {
     index: path.resolve(__dirname, "src/index.ts"),
     parser: path.resolve(__dirname, "src/parser/index.ts"),
     generator: path.resolve(__dirname, "src/generator/index.ts"),
+    cli: path.resolve(__dirname, "src/cli/index.ts"),
 };
 
 export default defineConfig({

@@ -336,7 +336,7 @@ export class Parser {
         templateDefaults: TemplateDefaults,
         options: ParserOptions,
     ): string {
-        const [variablePart, ...filterParts] = expression.split("|").map((part) => part.trim()).filter(Boolean);
+        const [variablePart, ...filterParts] = Parser.#splitTopLevel(expression, "|").filter(Boolean);
         if (!variablePart) return "";
 
         const equalsIndex = variablePart.indexOf("=");
@@ -448,6 +448,25 @@ export class Parser {
     }
 
     static #parseFilterArgs(raw: string): unknown[] {
+        const tokens = Parser.#splitTopLevel(raw, ",");
+
+        return tokens.map((token) => {
+            const parsed = Parser.parseLiteral(token);
+            if (parsed !== LITERALLY_NULL) return parsed;
+
+            const maybeString = token.trim();
+            if (
+                (maybeString.startsWith("'") && maybeString.endsWith("'")) ||
+                (maybeString.startsWith("\"") && maybeString.endsWith("\""))
+            ) {
+                return maybeString.slice(1, -1).replace(/\\(['"])/g, "$1");
+            }
+
+            return maybeString;
+        });
+    }
+
+    static #splitTopLevel(raw: string, separator: string): string[] {
         const tokens: string[] = [];
         let current = "";
         let inSingle = false;
@@ -455,6 +474,7 @@ export class Parser {
         let escaping = false;
         let bracketDepth = 0;
         let braceDepth = 0;
+        let parenDepth = 0;
 
         for (const char of raw) {
             if (escaping) {
@@ -486,8 +506,10 @@ export class Parser {
                 if (char === "]") bracketDepth = Math.max(0, bracketDepth - 1);
                 if (char === "{") braceDepth++;
                 if (char === "}") braceDepth = Math.max(0, braceDepth - 1);
+                if (char === "(") parenDepth++;
+                if (char === ")") parenDepth = Math.max(0, parenDepth - 1);
 
-                if (char === "," && bracketDepth === 0 && braceDepth === 0) {
+                if (char === separator && bracketDepth === 0 && braceDepth === 0 && parenDepth === 0) {
                     tokens.push(current.trim());
                     current = "";
                     continue;
@@ -497,24 +519,11 @@ export class Parser {
             current += char;
         }
 
-        if (current.trim() !== "" || raw.endsWith(",")) {
+        if (current.trim() !== "" || raw.endsWith(separator)) {
             tokens.push(current.trim());
         }
 
-        return tokens.map((token) => {
-            const parsed = Parser.parseLiteral(token);
-            if (parsed !== LITERALLY_NULL) return parsed;
-
-            const maybeString = token.trim();
-            if (
-                (maybeString.startsWith("'") && maybeString.endsWith("'")) ||
-                (maybeString.startsWith("\"") && maybeString.endsWith("\""))
-            ) {
-                return maybeString.slice(1, -1).replace(/\\(['"])/g, "$1");
-            }
-
-            return maybeString;
-        });
+        return tokens;
     }
 
     static #toString(value: unknown): string {

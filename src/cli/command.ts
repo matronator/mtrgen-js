@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import packageJson from "../../package.json";
+import { CliProfile } from "./profile";
+import { RegistryClient, parseTemplateIdentifier } from "./registry";
+import { TemplateStore } from "./store";
 import { Generator } from "../generator/generator";
 import { INVALID_TEMPLATE_LITERAL, parseTemplateLiteral } from "../template/literal";
 
@@ -10,33 +13,160 @@ export interface RunCliOptions {
     cwd?: string;
     stdout?: CliWriter;
     stderr?: CliWriter;
+    storeHomeDir?: string;
+    apiUrl?: string;
+    fetchImplementation?: typeof fetch;
 }
 
 type GenerateCommandOptions = {
-    templatePath: string;
+    target?: string;
+    templatePath?: string;
     outDir?: string;
     dataPath?: string;
     argAssignments: string[];
     dryRun: boolean;
 };
 
+type SaveCommandOptions = {
+    templatePath: string;
+    alias?: string;
+};
+
+type RemoveCommandOptions = {
+    name: string;
+};
+
+type AddCommandOptions = {
+    identifier: string;
+};
+
+type UseCommandOptions = {
+    identifier: string;
+    outDir?: string;
+    dataPath?: string;
+    argAssignments: string[];
+    dryRun: boolean;
+};
+
+type LoginCommandOptions = {
+    username: string;
+    password: string;
+    duration: number;
+};
+
+type SignupCommandOptions = {
+    username: string;
+    password: string;
+};
+
+type PublishCommandOptions = {
+    target?: string;
+    templatePath?: string;
+};
+
+type CommandHelp = {
+    canonicalName: string;
+    aliases: string[];
+    helpText: string;
+};
+
+type GeneratorRunOptions = Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "cwd" | "storeHomeDir">;
+type RegistryRunOptions = Required<Pick<RunCliOptions, "stdout">> &
+    Pick<RunCliOptions, "cwd" | "storeHomeDir" | "apiUrl" | "fetchImplementation">;
+
 const VERSION = typeof packageJson.version === "string" ? packageJson.version : "0.0.0";
 
-const GLOBAL_HELP = `mtrgen <command>
+const COMMANDS: Record<string, CommandHelp> = {
+    generate: {
+        canonicalName: "generate",
+        aliases: ["gen"],
+        helpText: `mtrgen generate [name] [key=value ...]
 
-Commands:
-  generate <template-path>  Generate files from an MTRGEN template
+Generate files from an MTRGEN template.
+
+Options:
+  -p, --path <file>         Generate from a template file path instead of a saved template name
+  -o, --out-dir <dir>       Output root directory (default: current working directory)
+  -d, --data <file>         JSON file with template arguments
+  -a, --arg <key=value>     Template argument, repeatable
+      --dry-run             Print the files that would be generated
+  -h, --help                Show help
+
+Examples:
+  mtrgen generate ButtonTemplate name=button folder=ui
+  mtrgen generate --path ./templates/component.ts.mtr --arg name=Button
+  mtrgen gen ButtonTemplate --data ./component.json --out-dir ./src
+`,
+    },
+    save: {
+        canonicalName: "save",
+        aliases: ["s"],
+        helpText: `mtrgen save <template-path>
+
+Save a template to the local store.
+
+Options:
+  -a, --alias <name>        Alias to use instead of the template header name
+  -h, --help                Show help
+
+Examples:
+  mtrgen save ./templates/component.ts.mtr
+  mtrgen save ./templates/component.ts.mtr --alias ButtonTemplate
+`,
+    },
+    saved: {
+        canonicalName: "saved",
+        aliases: ["ls"],
+        helpText: `mtrgen saved
+
+List templates saved in the local store.
 
 Options:
   -h, --help                Show help
-  -v, --version             Show version
+`,
+    },
+    remove: {
+        canonicalName: "remove",
+        aliases: ["rm"],
+        helpText: `mtrgen remove <name>
+
+Remove a template from the local store.
+
+Options:
+  -h, --help                Show help
+`,
+    },
+    repair: {
+        canonicalName: "repair",
+        aliases: ["r"],
+        helpText: `mtrgen repair
+
+Repair the local store by removing entries whose template files no longer exist.
+
+Options:
+  -h, --help                Show help
+`,
+    },
+    add: {
+        canonicalName: "add",
+        aliases: ["a"],
+        helpText: `mtrgen add <vendor/name>
+
+Download a template from the online registry and save it to the local store.
+
+Options:
+  -h, --help                Show help
 
 Examples:
-  mtrgen generate ./templates/component.ts.mtr --arg name=Button
-  mtrgen generate ./templates/component.ts.mtr --data ./component.json --out-dir ./src
-`;
+  mtrgen add vendor/component
+`,
+    },
+    use: {
+        canonicalName: "use",
+        aliases: ["u"],
+        helpText: `mtrgen use <vendor/name> [key=value ...]
 
-const GENERATE_HELP = `mtrgen generate <template-path>
+Generate files directly from a template in the online registry.
 
 Options:
   -o, --out-dir <dir>       Output root directory (default: current working directory)
@@ -46,8 +176,80 @@ Options:
   -h, --help                Show help
 
 Examples:
-  mtrgen generate ./templates/component.ts.mtr --arg name=Button --arg folder=components
-  mtrgen generate ./templates/component.ts.mtr --data ./component.json --out-dir ./src
+  mtrgen use vendor/component name=button
+  mtrgen use vendor/component --data ./component.json --out-dir ./src
+`,
+    },
+    login: {
+        canonicalName: "login",
+        aliases: ["in"],
+        helpText: `mtrgen login <username> <password>
+
+Login to the online registry.
+
+Options:
+  -d, --duration <hours>    Session duration in hours (default: 24)
+  -h, --help                Show help
+`,
+    },
+    signup: {
+        canonicalName: "signup",
+        aliases: ["sign"],
+        helpText: `mtrgen signup <username> <password>
+
+Create a user account in the online registry.
+
+Options:
+  -h, --help                Show help
+`,
+    },
+    publish: {
+        canonicalName: "publish",
+        aliases: ["pub"],
+        helpText: `mtrgen publish [name]
+
+Publish a template to the online registry.
+
+Options:
+  -p, --path <file>         Publish from a template file path instead of a saved template name
+  -h, --help                Show help
+
+Examples:
+  mtrgen publish ButtonTemplate
+  mtrgen publish --path ./templates/component.ts.mtr
+`,
+    },
+};
+
+const COMMAND_ALIASES = Object.fromEntries(
+    Object.values(COMMANDS).flatMap(({ canonicalName, aliases }) => [canonicalName, ...aliases].map((name) => [name, canonicalName])),
+);
+
+const GLOBAL_HELP = `mtrgen <command>
+
+Commands:
+  generate, gen            Generate files from a template file or saved template
+  save, s                  Save a template to the local store
+  saved, ls                List saved templates
+  remove, rm               Remove a template from the local store
+  repair, r                Repair the local store
+  add, a                   Download a template from the online registry
+  use, u                   Generate from an online registry template
+  login, in                Login to the online registry
+  signup, sign             Create a registry account
+  publish, pub             Publish a template to the online registry
+
+Other:
+  help [command]           Show global or command help
+  list                     Show all available commands
+  -h, --help               Show help
+  -v, --version            Show version
+
+Examples:
+  mtrgen generate --path ./templates/component.ts.mtr --arg name=Button
+  mtrgen save ./templates/component.ts.mtr --alias ButtonTemplate
+  mtrgen use vendor/component name=button
+  mtrgen publish ButtonTemplate
 `;
 
 export async function runCli(argv: string[], options: RunCliOptions = {}): Promise<number> {
@@ -57,7 +259,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     try {
         const command = argv[0];
 
-        if (!command || command === "-h" || command === "--help" || command === "help") {
+        if (!command || command === "-h" || command === "--help") {
             stdout(GLOBAL_HELP);
             return 0;
         }
@@ -67,20 +269,160 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
             return 0;
         }
 
-        if (command === "generate") {
-            const parsed = parseGenerateCommand(argv.slice(1));
-            if ("help" in parsed) {
-                stdout(GENERATE_HELP);
-                return 0;
-            }
-
-            return runGenerateCommand(parsed, {
-                cwd: options.cwd,
-                stdout,
-            });
+        if (command === "list") {
+            stdout(GLOBAL_HELP);
+            return 0;
         }
 
-        throw new Error(`Unknown command "${command}".`);
+        if (command === "help") {
+            const helpTarget = argv[1];
+            stdout(helpTarget ? getCommandHelp(helpTarget) : GLOBAL_HELP);
+            return 0;
+        }
+
+        const normalizedCommand = COMMAND_ALIASES[command];
+        if (!normalizedCommand) {
+            throw new Error(`Unknown command "${command}".`);
+        }
+
+        switch (normalizedCommand) {
+            case "generate": {
+                const parsed = parseGenerateCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.generate.helpText);
+                    return 0;
+                }
+
+                return runGenerateCommand(parsed, {
+                    cwd: options.cwd,
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                });
+            }
+            case "save": {
+                const parsed = parseSaveCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.save.helpText);
+                    return 0;
+                }
+
+                return runSaveCommand(parsed, {
+                    cwd: options.cwd,
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                });
+            }
+            case "saved": {
+                const parsed = parseSavedCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.saved.helpText);
+                    return 0;
+                }
+
+                return runSavedCommand({
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                });
+            }
+            case "remove": {
+                const parsed = parseRemoveCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.remove.helpText);
+                    return 0;
+                }
+
+                return runRemoveCommand(parsed, {
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                });
+            }
+            case "repair": {
+                const parsed = parseRepairCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.repair.helpText);
+                    return 0;
+                }
+
+                return runRepairCommand({
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                });
+            }
+            case "add": {
+                const parsed = parseAddCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.add.helpText);
+                    return 0;
+                }
+
+                return await runAddCommand(parsed, {
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                    apiUrl: options.apiUrl,
+                    fetchImplementation: options.fetchImplementation,
+                });
+            }
+            case "use": {
+                const parsed = parseUseCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.use.helpText);
+                    return 0;
+                }
+
+                return await runUseCommand(parsed, {
+                    cwd: options.cwd,
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                    apiUrl: options.apiUrl,
+                    fetchImplementation: options.fetchImplementation,
+                });
+            }
+            case "login": {
+                const parsed = parseLoginCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.login.helpText);
+                    return 0;
+                }
+
+                return await runLoginCommand(parsed, {
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                    apiUrl: options.apiUrl,
+                    fetchImplementation: options.fetchImplementation,
+                });
+            }
+            case "signup": {
+                const parsed = parseSignupCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.signup.helpText);
+                    return 0;
+                }
+
+                return await runSignupCommand(parsed, {
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                    apiUrl: options.apiUrl,
+                    fetchImplementation: options.fetchImplementation,
+                });
+            }
+            case "publish": {
+                const parsed = parsePublishCommand(argv.slice(1));
+                if ("help" in parsed) {
+                    stdout(COMMANDS.publish.helpText);
+                    return 0;
+                }
+
+                return await runPublishCommand(parsed, {
+                    cwd: options.cwd,
+                    stdout,
+                    storeHomeDir: options.storeHomeDir,
+                    apiUrl: options.apiUrl,
+                    fetchImplementation: options.fetchImplementation,
+                });
+            }
+        }
+
+        throw new Error(`Unhandled command "${normalizedCommand}".`);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         stderr(`Error: ${message}`);
@@ -90,7 +432,17 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
     }
 }
 
+function getCommandHelp(name: string): string {
+    const command = COMMAND_ALIASES[name];
+    if (!command) {
+        throw new Error(`Unknown command "${name}".`);
+    }
+
+    return COMMANDS[command].helpText;
+}
+
 function parseGenerateCommand(argv: string[]): GenerateCommandOptions | { help: true } {
+    let target: string | undefined;
     let templatePath: string | undefined;
     let outDir: string | undefined;
     let dataPath: string | undefined;
@@ -99,9 +451,194 @@ function parseGenerateCommand(argv: string[]): GenerateCommandOptions | { help: 
 
     for (let index = 0; index < argv.length; index++) {
         const token = argv[index] ?? "";
-
         if (!token) continue;
         if (token === "-h" || token === "--help") return { help: true };
+
+        if (token === "--dry-run") {
+            dryRun = true;
+            continue;
+        }
+
+        const templatePathValue = readInlineOptionValue(token, "--path");
+        if (token === "-p" || token === "--path" || templatePathValue !== undefined) {
+            templatePath = token === "-p" || token === "--path"
+                ? requireOptionValue(argv, ++index, token)
+                : templatePathValue;
+            continue;
+        }
+
+        const outDirValue = readInlineOptionValue(token, "--out-dir");
+        if (token === "-o" || token === "--out-dir" || outDirValue !== undefined) {
+            outDir = token === "-o" || token === "--out-dir"
+                ? requireOptionValue(argv, ++index, token)
+                : outDirValue;
+            continue;
+        }
+
+        const dataValue = readInlineOptionValue(token, "--data");
+        if (token === "-d" || token === "--data" || dataValue !== undefined) {
+            dataPath = token === "-d" || token === "--data"
+                ? requireOptionValue(argv, ++index, token)
+                : dataValue;
+            continue;
+        }
+
+        const argValue = readInlineOptionValue(token, "--arg");
+        if (token === "-a" || token === "--arg" || argValue !== undefined) {
+            const assignment = token === "-a" || token === "--arg"
+                ? requireOptionValue(argv, ++index, token)
+                : argValue ?? "";
+            argAssignments.push(assignment);
+            continue;
+        }
+
+        if (token.startsWith("-")) {
+            throw new Error(`Unknown option "${token}".`);
+        }
+
+        if (isAssignmentToken(token) && (templatePath || target)) {
+            argAssignments.push(token);
+            continue;
+        }
+
+        if (templatePath) {
+            throw new Error(`Unexpected argument "${token}".`);
+        }
+
+        if (!target) {
+            target = token;
+            continue;
+        }
+
+        if (isAssignmentToken(token)) {
+            argAssignments.push(token);
+            continue;
+        }
+
+        throw new Error(`Unexpected argument "${token}".`);
+    }
+
+    if (!templatePath && !target) {
+        throw new Error("Missing template name or --path. Usage: mtrgen generate [name] [key=value ...]");
+    }
+
+    return {
+        target,
+        templatePath,
+        outDir,
+        dataPath,
+        argAssignments,
+        dryRun,
+    };
+}
+
+function parseSaveCommand(argv: string[]): SaveCommandOptions | { help: true } {
+    let templatePath: string | undefined;
+    let alias: string | undefined;
+
+    for (let index = 0; index < argv.length; index++) {
+        const token = argv[index] ?? "";
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+
+        const aliasValue = readInlineOptionValue(token, "--alias");
+        if (token === "-a" || token === "--alias" || aliasValue !== undefined) {
+            alias = token === "-a" || token === "--alias"
+                ? requireOptionValue(argv, ++index, token)
+                : aliasValue;
+            continue;
+        }
+
+        if (token.startsWith("-")) {
+            throw new Error(`Unknown option "${token}".`);
+        }
+
+        if (templatePath) {
+            throw new Error(`Unexpected argument "${token}".`);
+        }
+
+        templatePath = token;
+    }
+
+    if (!templatePath) {
+        throw new Error("Missing template path. Usage: mtrgen save <template-path>");
+    }
+
+    return {
+        templatePath,
+        alias,
+    };
+}
+
+function parseSavedCommand(argv: string[]): Record<never, never> | { help: true } {
+    for (const token of argv) {
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+        throw new Error(`Unexpected argument "${token}".`);
+    }
+
+    return {};
+}
+
+function parseRemoveCommand(argv: string[]): RemoveCommandOptions | { help: true } {
+    let name: string | undefined;
+
+    for (const token of argv) {
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+        if (token.startsWith("-")) throw new Error(`Unknown option "${token}".`);
+        if (name) throw new Error(`Unexpected argument "${token}".`);
+        name = token;
+    }
+
+    if (!name) {
+        throw new Error("Missing template name. Usage: mtrgen remove <name>");
+    }
+
+    return { name };
+}
+
+function parseRepairCommand(argv: string[]): Record<never, never> | { help: true } {
+    for (const token of argv) {
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+        throw new Error(`Unexpected argument "${token}".`);
+    }
+
+    return {};
+}
+
+function parseAddCommand(argv: string[]): AddCommandOptions | { help: true } {
+    let identifier: string | undefined;
+
+    for (const token of argv) {
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+        if (token.startsWith("-")) throw new Error(`Unknown option "${token}".`);
+        if (identifier) throw new Error(`Unexpected argument "${token}".`);
+        identifier = token;
+    }
+
+    if (!identifier) {
+        throw new Error("Missing template identifier. Usage: mtrgen add <vendor/name>");
+    }
+
+    parseTemplateIdentifier(identifier);
+    return { identifier };
+}
+
+function parseUseCommand(argv: string[]): UseCommandOptions | { help: true } {
+    let identifier: string | undefined;
+    let outDir: string | undefined;
+    let dataPath: string | undefined;
+    const argAssignments: string[] = [];
+    let dryRun = false;
+
+    for (let index = 0; index < argv.length; index++) {
+        const token = argv[index] ?? "";
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+
         if (token === "--dry-run") {
             dryRun = true;
             continue;
@@ -136,23 +673,150 @@ function parseGenerateCommand(argv: string[]): GenerateCommandOptions | { help: 
             throw new Error(`Unknown option "${token}".`);
         }
 
-        if (templatePath) {
-            throw new Error(`Unexpected argument "${token}".`);
+        if (!identifier) {
+            identifier = token;
+            continue;
         }
 
-        templatePath = token;
+        if (isAssignmentToken(token)) {
+            argAssignments.push(token);
+            continue;
+        }
+
+        throw new Error(`Unexpected argument "${token}".`);
     }
 
-    if (!templatePath) {
-        throw new Error("Missing template path. Usage: mtrgen generate <template-path>");
+    if (!identifier) {
+        throw new Error("Missing template identifier. Usage: mtrgen use <vendor/name> [key=value ...]");
     }
 
+    parseTemplateIdentifier(identifier);
     return {
-        templatePath,
+        identifier,
         outDir,
         dataPath,
         argAssignments,
         dryRun,
+    };
+}
+
+function parseLoginCommand(argv: string[]): LoginCommandOptions | { help: true } {
+    let username: string | undefined;
+    let password: string | undefined;
+    let duration = 24;
+
+    for (let index = 0; index < argv.length; index++) {
+        const token = argv[index] ?? "";
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+
+        const durationValue = readInlineOptionValue(token, "--duration");
+        if (token === "-d" || token === "--duration" || durationValue !== undefined) {
+            const rawDuration = token === "-d" || token === "--duration"
+                ? requireOptionValue(argv, ++index, token)
+                : durationValue;
+            duration = Number(rawDuration);
+            if (!Number.isInteger(duration) || duration < 0) {
+                throw new Error(`Invalid duration "${rawDuration}". Use a non-negative integer.`);
+            }
+            continue;
+        }
+
+        if (token.startsWith("-")) {
+            throw new Error(`Unknown option "${token}".`);
+        }
+
+        if (!username) {
+            username = token;
+            continue;
+        }
+
+        if (!password) {
+            password = token;
+            continue;
+        }
+
+        throw new Error(`Unexpected argument "${token}".`);
+    }
+
+    if (!username || !password) {
+        throw new Error("Missing credentials. Usage: mtrgen login <username> <password>");
+    }
+
+    return {
+        username,
+        password,
+        duration,
+    };
+}
+
+function parseSignupCommand(argv: string[]): SignupCommandOptions | { help: true } {
+    let username: string | undefined;
+    let password: string | undefined;
+
+    for (const token of argv) {
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+        if (token.startsWith("-")) throw new Error(`Unknown option "${token}".`);
+
+        if (!username) {
+            username = token;
+            continue;
+        }
+
+        if (!password) {
+            password = token;
+            continue;
+        }
+
+        throw new Error(`Unexpected argument "${token}".`);
+    }
+
+    if (!username || !password) {
+        throw new Error("Missing credentials. Usage: mtrgen signup <username> <password>");
+    }
+
+    return {
+        username,
+        password,
+    };
+}
+
+function parsePublishCommand(argv: string[]): PublishCommandOptions | { help: true } {
+    let target: string | undefined;
+    let templatePath: string | undefined;
+
+    for (let index = 0; index < argv.length; index++) {
+        const token = argv[index] ?? "";
+        if (!token) continue;
+        if (token === "-h" || token === "--help") return { help: true };
+
+        const pathValue = readInlineOptionValue(token, "--path");
+        if (token === "-p" || token === "--path" || pathValue !== undefined) {
+            templatePath = token === "-p" || token === "--path"
+                ? requireOptionValue(argv, ++index, token)
+                : pathValue;
+            continue;
+        }
+
+        if (token.startsWith("-")) {
+            throw new Error(`Unknown option "${token}".`);
+        }
+
+        if (templatePath || target) {
+            throw new Error(`Unexpected argument "${token}".`);
+        }
+
+        target = token;
+    }
+
+    if (!templatePath && !target) {
+        throw new Error("Missing template name or --path. Usage: mtrgen publish [name]");
+    }
+
+    return {
+        target,
+        templatePath,
     };
 }
 
@@ -166,32 +830,225 @@ function requireOptionValue(argv: string[], index: number, flag: string): string
     return value;
 }
 
-function runGenerateCommand(command: GenerateCommandOptions, options: Required<Pick<RunCliOptions, "stdout">> & { cwd?: string }): number {
-    const cwd = options.cwd ?? process.cwd();
-    const templateArgs = buildTemplateArgs(command, cwd);
-    const generatedFiles = Generator.parseAnyFile(path.resolve(cwd, command.templatePath), templateArgs);
+function isAssignmentToken(token: string): boolean {
+    const equalsIndex = token.indexOf("=");
+    return equalsIndex > 0;
+}
 
-    if (command.dryRun) {
-        for (const file of generatedFiles) {
-            const destination = path.resolve(command.outDir ? path.resolve(cwd, command.outDir) : cwd, file.filePath);
-            options.stdout(`Would generate ${destination}`);
-        }
+function runGenerateCommand(command: GenerateCommandOptions, options: GeneratorRunOptions): number {
+    const cwd = options.cwd ?? process.cwd();
+    const store = new TemplateStore({ homeDir: options.storeHomeDir });
+    const templatePath = resolveStoredOrLocalTemplatePath(command.target, command.templatePath, cwd, store);
+    const templateArgs = buildTemplateArgs(command, cwd);
+    const generatedFiles = Generator.parseAnyFile(templatePath, templateArgs);
+
+    emitGeneratedFiles(generatedFiles, {
+        stdout: options.stdout,
+        cwd,
+        outDir: command.outDir,
+        dryRun: command.dryRun,
+    });
+
+    return 0;
+}
+
+function runSaveCommand(command: SaveCommandOptions, options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "cwd" | "storeHomeDir">): number {
+    const cwd = options.cwd ?? process.cwd();
+    const store = new TemplateStore({ homeDir: options.storeHomeDir });
+    const absolutePath = path.resolve(cwd, command.templatePath);
+    const savedName = store.save(absolutePath, command.alias);
+
+    options.stdout(`Template '${savedName}' added from '${absolutePath}'!`);
+    return 0;
+}
+
+function runSavedCommand(options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir">): number {
+    const store = new TemplateStore({ homeDir: options.storeHomeDir });
+    const names = store.listNames();
+
+    if (names.length === 0) {
+        options.stdout("No saved templates.");
         return 0;
     }
 
-    Generator.writeFiles(generatedFiles, {
-        rootDir: command.outDir ? path.resolve(cwd, command.outDir) : cwd,
-    });
-
-    for (const file of generatedFiles) {
-        const destination = path.resolve(command.outDir ? path.resolve(cwd, command.outDir) : cwd, file.filePath);
-        options.stdout(`Generated ${destination}`);
+    options.stdout("Saved templates:");
+    for (const name of names) {
+        options.stdout(`- ${name}`);
     }
 
     return 0;
 }
 
-function buildTemplateArgs(command: GenerateCommandOptions, cwd: string): Record<string, unknown> {
+function runRemoveCommand(command: RemoveCommandOptions, options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir">): number {
+    const store = new TemplateStore({ homeDir: options.storeHomeDir });
+    if (!store.remove(command.name)) {
+        throw new Error(`Couldn't find template with name "${command.name}".`);
+    }
+
+    options.stdout(`Template '${command.name}' removed!`);
+    return 0;
+}
+
+function runRepairCommand(options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir">): number {
+    const store = new TemplateStore({ homeDir: options.storeHomeDir });
+    const removed = store.repair();
+
+    if (removed.length === 0) {
+        options.stdout("Local store repaired. No stale templates were found.");
+        return 0;
+    }
+
+    options.stdout(`Local store repaired. Removed ${removed.length} stale template${removed.length === 1 ? "" : "s"}.`);
+    return 0;
+}
+
+async function runAddCommand(command: AddCommandOptions, options: RegistryRunOptions): Promise<number> {
+    const registry = new RegistryClient({
+        apiUrl: options.apiUrl,
+        fetchImplementation: options.fetchImplementation,
+    });
+    const store = new TemplateStore({ homeDir: options.storeHomeDir });
+    const template = await registry.getTemplate(command.identifier);
+
+    store.saveRemote(command.identifier, template.fileName, template.contents);
+    options.stdout(`Template '${command.identifier}' was added to the local store!`);
+    return 0;
+}
+
+async function runUseCommand(command: UseCommandOptions, options: RegistryRunOptions): Promise<number> {
+    const cwd = options.cwd ?? process.cwd();
+    const registry = new RegistryClient({
+        apiUrl: options.apiUrl,
+        fetchImplementation: options.fetchImplementation,
+    });
+    const template = await registry.getTemplate(command.identifier);
+    const templateArgs = buildTemplateArgs(command, cwd);
+    const generatedFile = Generator.parseTemplate(template.contents, templateArgs);
+
+    emitGeneratedFiles([generatedFile], {
+        stdout: options.stdout,
+        cwd,
+        outDir: command.outDir,
+        dryRun: command.dryRun,
+    });
+
+    return 0;
+}
+
+async function runLoginCommand(command: LoginCommandOptions, options: RegistryRunOptions): Promise<number> {
+    const registry = new RegistryClient({
+        apiUrl: options.apiUrl,
+        fetchImplementation: options.fetchImplementation,
+    });
+    const response = await registry.login(command.username, command.password, command.duration);
+
+    if (response.status !== "success" || !response.token) {
+        throw new Error(response.message ?? "Something went wrong. Try again.");
+    }
+
+    const profile = new CliProfile({ homeDir: options.storeHomeDir });
+    profile.save(command.username, response.token);
+
+    options.stdout(`Logged in as ${command.username}.`);
+    return 0;
+}
+
+async function runSignupCommand(command: SignupCommandOptions, options: RegistryRunOptions): Promise<number> {
+    const registry = new RegistryClient({
+        apiUrl: options.apiUrl,
+        fetchImplementation: options.fetchImplementation,
+    });
+    await registry.signup(command.username, command.password);
+
+    options.stdout(`User ${command.username} created. You may now login.`);
+    return 0;
+}
+
+async function runPublishCommand(command: PublishCommandOptions, options: RegistryRunOptions): Promise<number> {
+    const cwd = options.cwd ?? process.cwd();
+    const profile = new CliProfile({ homeDir: options.storeHomeDir });
+    const session = profile.load();
+
+    if (!session.username || !session.token) {
+        throw new Error("You must login first.");
+    }
+
+    const store = new TemplateStore({ homeDir: options.storeHomeDir });
+    const templatePath = resolveStoredOrLocalTemplatePath(command.target, command.templatePath, cwd, store);
+    const contents = readFileSync(templatePath, "utf8");
+    const header = Generator.getTemplateHeader(contents);
+    const registry = new RegistryClient({
+        apiUrl: options.apiUrl,
+        fetchImplementation: options.fetchImplementation,
+    });
+    const response = await registry.publishTemplate({
+        username: session.username,
+        token: session.token,
+        fileName: path.basename(templatePath),
+        templateName: header.name,
+        contents,
+    });
+
+    if (response.status !== "success") {
+        throw new Error(response.message ?? "Publishing failed.");
+    }
+
+    options.stdout(`Template '${header.name}' published as '${session.username.toLowerCase()}/${header.name.toLowerCase()}'!`);
+    return 0;
+}
+
+function resolveStoredOrLocalTemplatePath(
+    target: string | undefined,
+    templatePath: string | undefined,
+    cwd: string,
+    store: TemplateStore,
+): string {
+    if (templatePath) {
+        const resolved = path.resolve(cwd, templatePath);
+        if (!existsSync(resolved)) {
+            throw new Error(`Template file not found: ${resolved}`);
+        }
+        return resolved;
+    }
+
+    if (!target) {
+        throw new Error("Missing template name or path.");
+    }
+
+    const storedPath = store.getFullPath(target);
+    if (storedPath) {
+        return storedPath;
+    }
+
+    const resolvedPath = path.resolve(cwd, target);
+    if (existsSync(resolvedPath)) {
+        return resolvedPath;
+    }
+
+    throw new Error(`Template "${target}" not found in the local store.`);
+}
+
+function emitGeneratedFiles(
+    files: ReturnType<typeof Generator.parseAnyFile>,
+    options: { stdout: CliWriter; cwd: string; outDir?: string; dryRun: boolean },
+): void {
+    const rootDir = options.outDir ? path.resolve(options.cwd, options.outDir) : options.cwd;
+
+    if (options.dryRun) {
+        for (const file of files) {
+            options.stdout(`Would generate ${path.resolve(rootDir, file.filePath)}`);
+        }
+        return;
+    }
+
+    Generator.writeFiles(files, { rootDir });
+
+    for (const file of files) {
+        options.stdout(`Generated ${path.resolve(rootDir, file.filePath)}`);
+    }
+}
+
+function buildTemplateArgs(command: Pick<GenerateCommandOptions, "dataPath" | "argAssignments">, cwd: string): Record<string, unknown> {
     const data = command.dataPath ? readDataFile(path.resolve(cwd, command.dataPath)) : {};
 
     for (const assignment of command.argAssignments) {

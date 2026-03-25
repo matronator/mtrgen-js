@@ -149,6 +149,7 @@ Filters are chained with `|`:
 ```txt
 <% name|pascalCase %>
 <% title|truncate:30,"..." %>
+<% foo|truncate:3,""|upper %>
 ```
 
 Available filters:

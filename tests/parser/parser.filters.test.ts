@@ -28,4 +28,12 @@ describe("Parser (filters)", () => {
         expect(Parser.parseString(template2, { var: "hello" })).toBe("hello");
         expect(Parser.parseString(template2, { var: "hello_world. And HTML idk." })).toBe("hello_worl-");
     });
+
+    it("chains filters", () => {
+        const template1 = '<% var|truncate:3,""|upper %>';
+        const template2 = '<% var|truncate:3,"|"|upper %>';
+
+        expect(Parser.parseString(template1, { var: "Hello" })).toBe("HEL");
+        expect(Parser.parseString(template2, { var: "Hello" })).toBe("HEL|");
+    });
 });

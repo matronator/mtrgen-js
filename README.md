@@ -1,10 +1,10 @@
-# MTRGen
+# MTRGen.js
 
 ![MTRGen Logo](.github/logo.png)
 
 #### [Official Website](https://mtrgen.matronator.cz) | [Documentation](https://mtrgen.matronator.cz/public/docs/) | [Template Repository](https://mtrgen.matronator.cz/repository)
 
-`mtrgen` is a template-driven file generator for Node.js. It ships both as a TypeScript library and as a CLI so you can generate files from `.mtr` templates in code or directly from the terminal.
+`mtrgen` is a template-driven file generator for Node.js and browser. It ships both as a TypeScript library and as a CLI so you can generate files from `.mtr` templates in code or directly from the terminal.
 
 This is a port of the original PHP libraries [MTRGen](https://github.com/matronator/MTRGen) and [Pars'Em](https://github.com/matronator/parsem).
 
@@ -35,24 +35,49 @@ npx mtrgen generate ./templates/component.ts.mtr --arg name=Button
 The package exposes the `mtrgen` command:
 
 ```sh
-mtrgen generate <template-path> [options]
+mtrgen <command> [options]
 ```
 
-Supported options:
+Available commands:
+
+- `generate`, `gen`: generate from a saved template name or from `--path <file>`.
+- `save`, `s`: save a local `.mtr` template into the local store.
+- `saved`, `ls`: list templates in the local store.
+- `remove`, `rm`: remove a template from the local store.
+- `repair`, `r`: remove broken entries from the local store.
+- `add`, `a`: download a template from the online registry into the local store.
+- `use`, `u`: generate directly from an online registry template.
+- `login`, `in`: log into the online registry and save the access token locally.
+- `signup`, `sign`: create a registry account.
+- `publish`, `pub`: publish a local or saved template to the online registry.
+- `help [command]`: show global help or command help.
+- `list`: list the available commands.
+- `-v`, `--version`: print the package version.
+
+The local template store and login profile are saved under `~/.mtrgen`.
+
+### Generate
+
+```sh
+mtrgen generate [name] [key=value ...]
+mtrgen generate --path <template-path> [options]
+```
+
+Supported options for `generate` and `use`:
 
 - `-o, --out-dir <dir>`: output root directory. Defaults to the current working directory.
 - `-d, --data <file>`: path to a JSON file with template arguments.
 - `-a, --arg <key=value>`: inline template argument. Repeat this flag to pass multiple values.
 - `--dry-run`: print the target file paths without writing anything.
 - `-h, --help`: show command help.
-- `-v, --version`: print the package version.
 
 Examples:
 
 ```sh
-mtrgen generate ./templates/component.ts.mtr --arg name=Button --arg folder=components
-mtrgen generate ./templates/component.ts.mtr --data ./component.json --out-dir ./src
-mtrgen generate ./templates/component.ts.mtr --data ./component.json --arg meta.folder=ui
+mtrgen generate --path ./templates/component.ts.mtr --arg name=Button --arg folder=components
+mtrgen generate ButtonTemplate name=Button folder=components
+mtrgen generate ButtonTemplate --data ./component.json --out-dir ./src
+mtrgen use vendor/component name=Button --out-dir ./src
 ```
 
 Inline CLI argument values use the same literal parser as template defaults when possible:
@@ -69,6 +94,28 @@ Nested keys are supported in CLI arguments:
 
 ```sh
 mtrgen generate ./template.mtr --arg meta.folder=components --arg items[0]=Button
+```
+
+### Template Store
+
+```sh
+mtrgen save ./templates/component.ts.mtr --alias ButtonTemplate
+mtrgen saved
+mtrgen remove ButtonTemplate
+mtrgen repair
+```
+
+### Online Registry
+
+The registry-backed commands use `https://mtrgen.matronator.cz/api`.
+
+```sh
+mtrgen signup my-user Password123
+mtrgen login my-user Password123
+mtrgen add vendor/component
+mtrgen use vendor/component name=Button
+mtrgen publish ButtonTemplate
+mtrgen publish --path ./templates/component.ts.mtr
 ```
 
 ## Template Format

@@ -70,9 +70,11 @@ type CommandHelp = {
     helpText: string;
 };
 
-type GeneratorRunOptions = Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "cwd" | "storeHomeDir">;
+type CliFormatter = ReturnType<typeof createCliFormatter>;
+
+type GeneratorRunOptions = Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "cwd" | "storeHomeDir"> & { format: CliFormatter };
 type RegistryRunOptions = Required<Pick<RunCliOptions, "stdout">> &
-    Pick<RunCliOptions, "cwd" | "storeHomeDir" | "apiUrl" | "fetchImplementation">;
+    Pick<RunCliOptions, "cwd" | "storeHomeDir" | "apiUrl" | "fetchImplementation"> & { format: CliFormatter };
 
 const VERSION = typeof packageJson.version === "string" ? packageJson.version : "0.0.0";
 
@@ -255,6 +257,7 @@ Examples:
 export async function runCli(argv: string[], options: RunCliOptions = {}): Promise<number> {
     const stdout = options.stdout ?? console.log;
     const stderr = options.stderr ?? console.error;
+    const format = createCliFormatter(shouldUseColor(options));
 
     try {
         const command = argv[0];
@@ -297,6 +300,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                     cwd: options.cwd,
                     stdout,
                     storeHomeDir: options.storeHomeDir,
+                    format,
                 });
             }
             case "save": {
@@ -310,6 +314,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                     cwd: options.cwd,
                     stdout,
                     storeHomeDir: options.storeHomeDir,
+                    format,
                 });
             }
             case "saved": {
@@ -322,6 +327,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                 return runSavedCommand({
                     stdout,
                     storeHomeDir: options.storeHomeDir,
+                    format,
                 });
             }
             case "remove": {
@@ -334,6 +340,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                 return runRemoveCommand(parsed, {
                     stdout,
                     storeHomeDir: options.storeHomeDir,
+                    format,
                 });
             }
             case "repair": {
@@ -346,6 +353,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                 return runRepairCommand({
                     stdout,
                     storeHomeDir: options.storeHomeDir,
+                    format,
                 });
             }
             case "add": {
@@ -360,6 +368,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                     storeHomeDir: options.storeHomeDir,
                     apiUrl: options.apiUrl,
                     fetchImplementation: options.fetchImplementation,
+                    format,
                 });
             }
             case "use": {
@@ -375,6 +384,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                     storeHomeDir: options.storeHomeDir,
                     apiUrl: options.apiUrl,
                     fetchImplementation: options.fetchImplementation,
+                    format,
                 });
             }
             case "login": {
@@ -389,6 +399,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                     storeHomeDir: options.storeHomeDir,
                     apiUrl: options.apiUrl,
                     fetchImplementation: options.fetchImplementation,
+                    format,
                 });
             }
             case "signup": {
@@ -403,6 +414,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                     storeHomeDir: options.storeHomeDir,
                     apiUrl: options.apiUrl,
                     fetchImplementation: options.fetchImplementation,
+                    format,
                 });
             }
             case "publish": {
@@ -418,6 +430,7 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
                     storeHomeDir: options.storeHomeDir,
                     apiUrl: options.apiUrl,
                     fetchImplementation: options.fetchImplementation,
+                    format,
                 });
             }
         }
@@ -425,11 +438,31 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
         throw new Error(`Unhandled command "${normalizedCommand}".`);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        stderr(`Error: ${message}`);
+        stderr(format.error(`Error: ${message}`));
         stderr("");
         stderr(GLOBAL_HELP);
         return 1;
     }
+}
+
+function shouldUseColor(options: RunCliOptions): boolean {
+    if (process.env.NO_COLOR) return false;
+    if (options.stdout !== undefined || options.stderr !== undefined) return false;
+    return Boolean(process.stdout.isTTY || process.stderr.isTTY);
+}
+
+function createCliFormatter(useColor: boolean) {
+    const wrap = (open: string, message: string): string => useColor ? `${open}${message}\u001B[0m` : message;
+
+    return {
+        success: (message: string): string => wrap("\u001B[32m", message),
+        warning: (message: string): string => wrap("\u001B[33m", message),
+        error: (message: string): string => wrap("\u001B[31m", message),
+        info: (message: string): string => wrap("\u001B[36m", message),
+        label: (message: string): string => wrap("\u001B[1m", message),
+        path: (message: string): string => wrap("\u001B[36m", message),
+        value: (message: string): string => wrap("\u001B[33m", message),
+    };
 }
 
 function getCommandHelp(name: string): string {
@@ -847,58 +880,63 @@ function runGenerateCommand(command: GenerateCommandOptions, options: GeneratorR
         cwd,
         outDir: command.outDir,
         dryRun: command.dryRun,
+        format: options.format,
     });
 
     return 0;
 }
 
-function runSaveCommand(command: SaveCommandOptions, options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "cwd" | "storeHomeDir">): number {
+function runSaveCommand(command: SaveCommandOptions, options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "cwd" | "storeHomeDir"> & { format: CliFormatter }): number {
     const cwd = options.cwd ?? process.cwd();
     const store = new TemplateStore({ homeDir: options.storeHomeDir });
     const absolutePath = path.resolve(cwd, command.templatePath);
     const savedName = store.save(absolutePath, command.alias);
 
-    options.stdout(`Template '${savedName}' added from '${absolutePath}'!`);
+    options.stdout(
+        `${options.format.success("Template")} ${options.format.value(savedName)} ${options.format.success("added from")} ${options.format.path(absolutePath)}${options.format.success("!")}`,
+    );
     return 0;
 }
 
-function runSavedCommand(options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir">): number {
+function runSavedCommand(options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir"> & { format: CliFormatter }): number {
     const store = new TemplateStore({ homeDir: options.storeHomeDir });
     const names = store.listNames();
 
     if (names.length === 0) {
-        options.stdout("No saved templates.");
+        options.stdout(options.format.warning("No saved templates."));
         return 0;
     }
 
-    options.stdout("Saved templates:");
+    options.stdout(options.format.label("Saved templates:"));
     for (const name of names) {
-        options.stdout(`- ${name}`);
+        options.stdout(`${options.format.info("-")} ${options.format.value(name)}`);
     }
 
     return 0;
 }
 
-function runRemoveCommand(command: RemoveCommandOptions, options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir">): number {
+function runRemoveCommand(command: RemoveCommandOptions, options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir"> & { format: CliFormatter }): number {
     const store = new TemplateStore({ homeDir: options.storeHomeDir });
     if (!store.remove(command.name)) {
         throw new Error(`Couldn't find template with name "${command.name}".`);
     }
 
-    options.stdout(`Template '${command.name}' removed!`);
+    options.stdout(`${options.format.success("Template")} ${options.format.value(command.name)} ${options.format.success("removed!")}`);
     return 0;
 }
 
-function runRepairCommand(options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir">): number {
+function runRepairCommand(options: Required<Pick<RunCliOptions, "stdout">> & Pick<RunCliOptions, "storeHomeDir"> & { format: CliFormatter }): number {
     const store = new TemplateStore({ homeDir: options.storeHomeDir });
     const removed = store.repair();
 
     if (removed.length === 0) {
-        options.stdout("Local store repaired. No stale templates were found.");
+        options.stdout(options.format.success("Local store repaired. No stale templates were found."));
         return 0;
     }
 
-    options.stdout(`Local store repaired. Removed ${removed.length} stale template${removed.length === 1 ? "" : "s"}.`);
+    options.stdout(
+        `${options.format.success("Local store repaired.")} ${options.format.info("Removed")} ${options.format.value(String(removed.length))} ${options.format.info(`stale template${removed.length === 1 ? "" : "s"}.`)}`,
+    );
     return 0;
 }
 
@@ -911,7 +949,7 @@ async function runAddCommand(command: AddCommandOptions, options: RegistryRunOpt
     const template = await registry.getTemplate(command.identifier);
 
     store.saveRemote(command.identifier, template.fileName, template.contents);
-    options.stdout(`Template '${command.identifier}' was added to the local store!`);
+    options.stdout(`${options.format.success("Template")} ${options.format.value(command.identifier)} ${options.format.success("was added to the local store!")}`);
     return 0;
 }
 
@@ -930,6 +968,7 @@ async function runUseCommand(command: UseCommandOptions, options: RegistryRunOpt
         cwd,
         outDir: command.outDir,
         dryRun: command.dryRun,
+        format: options.format,
     });
 
     return 0;
@@ -949,7 +988,7 @@ async function runLoginCommand(command: LoginCommandOptions, options: RegistryRu
     const profile = new CliProfile({ homeDir: options.storeHomeDir });
     profile.save(command.username, response.token);
 
-    options.stdout(`Logged in as ${command.username}.`);
+    options.stdout(`${options.format.success("Logged in as")} ${options.format.value(command.username)}${options.format.success(".")}`);
     return 0;
 }
 
@@ -960,7 +999,9 @@ async function runSignupCommand(command: SignupCommandOptions, options: Registry
     });
     await registry.signup(command.username, command.password);
 
-    options.stdout(`User ${command.username} created. You may now login.`);
+    options.stdout(
+        `${options.format.success("User")} ${options.format.value(command.username)} ${options.format.success("created. You may now login.")}`,
+    );
     return 0;
 }
 
@@ -993,7 +1034,9 @@ async function runPublishCommand(command: PublishCommandOptions, options: Regist
         throw new Error(response.message ?? "Publishing failed.");
     }
 
-    options.stdout(`Template '${header.name}' published as '${session.username.toLowerCase()}/${header.name.toLowerCase()}'!`);
+    options.stdout(
+        `${options.format.success("Template")} ${options.format.value(header.name)} ${options.format.success("published as")} ${options.format.path(`${session.username.toLowerCase()}/${header.name.toLowerCase()}`)}${options.format.success("!")}`,
+    );
     return 0;
 }
 
@@ -1030,13 +1073,13 @@ function resolveStoredOrLocalTemplatePath(
 
 function emitGeneratedFiles(
     files: ReturnType<typeof Generator.parseAnyFile>,
-    options: { stdout: CliWriter; cwd: string; outDir?: string; dryRun: boolean },
+    options: { stdout: CliWriter; cwd: string; outDir?: string; dryRun: boolean; format: CliFormatter },
 ): void {
     const rootDir = options.outDir ? path.resolve(options.cwd, options.outDir) : options.cwd;
 
     if (options.dryRun) {
         for (const file of files) {
-            options.stdout(`Would generate ${path.resolve(rootDir, file.filePath)}`);
+            options.stdout(`${options.format.warning("Would generate")} ${options.format.path(path.resolve(rootDir, file.filePath))}`);
         }
         return;
     }
@@ -1044,7 +1087,7 @@ function emitGeneratedFiles(
     Generator.writeFiles(files, { rootDir });
 
     for (const file of files) {
-        options.stdout(`Generated ${path.resolve(rootDir, file.filePath)}`);
+        options.stdout(`${options.format.success("Generated")} ${options.format.path(path.resolve(rootDir, file.filePath))}`);
     }
 }
 

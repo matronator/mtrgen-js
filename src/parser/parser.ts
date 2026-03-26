@@ -88,10 +88,13 @@ export class Parser {
 
     public static removeComments(text: string, options: ParserOptions = DefaultOptions): string {
         const pattern = options?.patterns?.comments ?? Parser.COMMENT_PATTERN;
+        const standaloneCommentLine = /^[\t ]*<#([\s\S]*?)#>[\t ]*(?:\r?\n(?:[\t ]*\r?\n)?)?/gm;
+        const withoutStandaloneLines = text.replace(standaloneCommentLine, "");
+
         const flagsSet = new Set(pattern.flags.split(""));
         flagsSet.add("g");
         const re = new RegExp(pattern.source, Array.from(flagsSet).join(""));
-        return text.replace(re, "");
+        return withoutStandaloneLines.replace(re, "");
     }
 
     public static parseConditions(text: string, args: Array<Record<string, unknown>>, offset: number = 0, options: ParserOptions = DefaultOptions): string {
@@ -153,6 +156,7 @@ export class Parser {
     ): string {
         let parsed = text;
         let offset = 0;
+        const expressionArgs = [ ...args, templateDefaults ];
 
         while (true) {
             const tag = Parser.#nextTag(parsed, offset);
@@ -161,7 +165,7 @@ export class Parser {
             if (tag.keyword === "if") {
                 const block = Parser.#findIfBlock(parsed, tag);
                 const branch = block.branches.find((candidate) =>
-                    candidate.condition === null || Parser.#evaluateCondition(candidate.condition, args),
+                    candidate.condition === null || Parser.#evaluateCondition(candidate.condition, expressionArgs),
                 );
                 const replacement = branch
                     ? Parser.#renderTemplate(branch.content, args, templateDefaults, options)
@@ -174,7 +178,7 @@ export class Parser {
 
             if (tag.keyword === "for") {
                 const block = Parser.#findForBlock(parsed, tag);
-                const replacement = Parser.#renderForBlock(tag.inner, block.content, args, templateDefaults, options);
+                const replacement = Parser.#renderForBlock(tag.inner, block.content, expressionArgs, templateDefaults, options);
                 parsed = Parser.#replaceRange(parsed, tag.controlStart, block.afterEnd - tag.controlStart, replacement);
                 offset = tag.controlStart + replacement.length;
                 continue;
@@ -336,8 +340,10 @@ export class Parser {
         const end = start + raw.length;
         const keywordMatch = /^(if|elseif|else|endif|for|endfor)\b/.exec(inner);
         const keyword = (keywordMatch?.[1] as ControlKeyword | undefined) ?? null;
-        const controlStart = keyword ? Parser.#lineStartIfWhitespaceOnly(text, start) : start;
-        const controlEnd = keyword ? Parser.#consumeTrailingLineBreak(text, start, end, controlStart) : end;
+        const standaloneControlTag = keyword ? Parser.#isStandaloneControlTag(text, start, end) : false;
+        const shouldConsumeTrailingLineBreak = keyword ? Parser.#isLineSuffixWhitespaceOnly(text, end) : false;
+        const controlStart = standaloneControlTag ? Parser.#lineStartIfWhitespaceOnly(text, start) : start;
+        const controlEnd = shouldConsumeTrailingLineBreak ? Parser.#consumeTrailingLineBreak(text, end) : end;
 
         return {
             raw,
@@ -350,11 +356,25 @@ export class Parser {
         };
     }
 
-    static #consumeTrailingLineBreak(text: string, start: number, end: number, controlStart: number): number {
-        if (controlStart === start) return end;
+    static #consumeTrailingLineBreak(text: string, end: number): number {
         if (text.startsWith("\r\n", end)) return end + 2;
         if (text[end] === "\n") return end + 1;
         return end;
+    }
+
+    static #isStandaloneControlTag(text: string, start: number, end: number): boolean {
+        const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+        const lineEndIndex = text.indexOf("\n", end);
+        const lineEnd = lineEndIndex === -1 ? text.length : lineEndIndex;
+        const prefix = text.slice(lineStart, start);
+        const suffix = text.slice(end, lineEnd);
+        return /^[\t ]*$/.test(prefix) && /^[\t ]*$/.test(suffix);
+    }
+
+    static #isLineSuffixWhitespaceOnly(text: string, end: number): boolean {
+        const lineEndIndex = text.indexOf("\n", end);
+        const lineEnd = lineEndIndex === -1 ? text.length : lineEndIndex;
+        return /^[\t ]*$/.test(text.slice(end, lineEnd));
     }
 
     static #findIfBlock(text: string, openTag: TagInfo): { branches: ConditionBranch[]; afterEnd: number } {

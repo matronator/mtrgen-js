@@ -1,5 +1,3 @@
-
-
 ;; Implement the `ft-trait` trait defined in the `ft-trait` contract
 
 (impl-trait 'SP3FBR2AGK5H9QBDH3EEN6DF8EK8JY7RX8QJ5SVTE.sip-010-trait-ft-standard.sip-010-trait)
@@ -36,9 +34,5 @@
       (ft-set-token-uri asdads token_uri)
       (ok true))
     (err ERR_ADMIN_ONLY)))
-
-
-
-
 
 (ft-mint? asdads u8 CONTRACT_OWNER)

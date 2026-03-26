@@ -92,4 +92,23 @@ describe("Parser (variables)", () => {
 
         expect(Parser.parseString(template, args)).toBe("Hello world!");
     });
+
+    it("stringifies plain objects as JSON", () => {
+        const template = "<% meta %>";
+        const args = { meta: { hello: "world", count: 2 } };
+
+        expect(Parser.parseString(template, args)).toBe(JSON.stringify(args.meta));
+    });
+
+    it("supports dynamic object keys from another variable", () => {
+        const template = "<% meta[$field] %> <% items[$index] %>!";
+        const args = {
+            meta: { title: "Hello" },
+            items: ["world"],
+            field: "title",
+            index: 0,
+        };
+
+        expect(Parser.parseString(template, args)).toBe("Hello world!");
+    });
 });

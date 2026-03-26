@@ -139,6 +139,22 @@ describe("Parser (conditions)", () => {
         expect(Parser.parseString(template4)).toBe("literal");
     });
 
+    it("accepts flexible whitespace in control tags", () => {
+        const template = [
+            "<%   if   $state === 'if'   %>",
+            "IF",
+            "<%\telseif\t$state === 'elseif'\t%>",
+            "ELSEIF",
+            "<%    else    %>",
+            "ELSE",
+            "<%   endif   %>",
+        ].join("");
+
+        expect(Parser.parseString(template, { state: "if" })).toBe("IF");
+        expect(Parser.parseString(template, { state: "elseif" })).toBe("ELSEIF");
+        expect(Parser.parseString(template, { state: "other" })).toBe("ELSE");
+    });
+
     it("parses a real-world nested condition sample", () => {
         const template = `<% if $mintable === true %>
 (define-public (mint (amount uint) (recipient principal))
@@ -194,5 +210,27 @@ describe("Parser (conditions)", () => {
         const args = { var: ["world"] };
 
         expect(Parser.parseString(template, args)).toBe("Hello world!");
+    });
+
+    it("supports complex boolean expressions with parentheses", () => {
+        const template = "<% if ($a === $b && $b <= $c) || !$d || !($e !== null && !$f) %>matched<% else %>missed<% endif %>";
+
+        expect(Parser.parseString(template, {
+            a: 1,
+            b: 1,
+            c: 2,
+            d: true,
+            e: "value",
+            f: true,
+        })).toBe("matched");
+
+        expect(Parser.parseString(template, {
+            a: 1,
+            b: 2,
+            c: 3,
+            d: true,
+            e: "value",
+            f: false,
+        })).toBe("missed");
     });
 });

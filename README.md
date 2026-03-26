@@ -2,6 +2,11 @@
 
 ![MTRGen Logo](.github/logo.png)
 
+![Latest version](https://badgen.net/npm/v/mtrgen-js)
+![License](https://badgen.net/npm/license/mtrgen-js)
+![Dependencies](https://badgen.net/bundlephobia/dependency-count/mtrgen-js)
+![Monthly downloads](https://badgen.net/npm/dm/mtrgen-js)
+
 #### [Official Website](https://mtrgen.matronator.cz) | [Documentation](https://mtrgen.matronator.cz/public/docs/) | [Template Repository](https://mtrgen.matronator.cz/repository) | [PHP version](https://github.com/matronator/MTRGen)
 
 `mtrgen` is a template-driven file generator for Node.js and browser. It ships both as a TypeScript library and as a CLI so you can generate files from `.mtr` templates in code or directly from the terminal.
@@ -75,8 +80,11 @@ Examples:
 
 ```sh
 mtrgen generate --path ./templates/component.ts.mtr --arg name=Button --arg folder=components
+
 mtrgen generate ButtonTemplate name=Button folder=components
+
 mtrgen generate ButtonTemplate --data ./component.json --out-dir ./src
+
 mtrgen use vendor/component name=Button --out-dir ./src
 ```
 
@@ -119,6 +127,8 @@ mtrgen publish --path ./templates/component.ts.mtr
 ```
 
 ## Template Format
+
+For the full language reference, see [docs/mtrgen-spec.md](./docs/mtrgen-spec.md).
 
 Every generator template starts with an `MTRGEN` header:
 
@@ -166,7 +176,10 @@ Lookup supports nested properties and array indexes:
 <% user.profile.handle %>
 <% items[0] %>
 <% meta["folder"] %>
+<% meta[$field] %>
 ```
+
+Plain objects are interpolated as JSON instead of `[object Object]`.
 
 ## Default Value Precedence
 
@@ -244,6 +257,8 @@ Conditions support:
 
 - variable lookups with `$name`
 - nested lookups like `$user.name` or `$items[0]`
+- grouped expressions with parentheses
+- boolean operators `&&` and `||`
 - literal comparisons
 - negation with `!`
 - nested condition blocks
@@ -251,7 +266,7 @@ Conditions support:
 Example:
 
 ```txt
-<% if $kind === "service" %>
+<% if ($kind === "service" && $enabled) || !$fallback %>
 export class <% name|pascalCase %>Service {}
 <% elseif !$enabled %>
 // disabled
@@ -259,6 +274,25 @@ export class <% name|pascalCase %>Service {}
 export const <% name %> = true;
 <% endif %>
 ```
+
+## Loops
+
+Loop blocks use `for` and `endfor`:
+
+```txt
+<% for item of items %>
+<% item %>
+<% endfor %>
+```
+
+Supported forms:
+
+- `<% for item of array %>`
+- `<% for [item, index] of array %>`
+- `<% for [item, key] of object %>`
+- `<% for item of object %>`
+- `<% for [_, index] of array %>`
+- `<% for [_, key] of object %>`
 
 ## Comments
 

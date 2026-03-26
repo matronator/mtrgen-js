@@ -116,7 +116,8 @@ ELSEIF`);
 second=custom
 truthy=false
 nested=user
-IF`);
+IF
+`);
     });
 
     it("test formatting defaults with whitespace like JSON", () => {
@@ -124,6 +125,7 @@ IF`);
 second=string
 truthy=true
 nested=lol
-ELSEIF`);
+ELSEIF
+`);
     });
 });

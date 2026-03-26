@@ -893,7 +893,7 @@ function runSaveCommand(command: SaveCommandOptions, options: Required<Pick<RunC
     const savedName = store.save(absolutePath, command.alias);
 
     options.stdout(
-        `${options.format.success("Template")} ${options.format.value(savedName)} ${options.format.success("added from")} ${options.format.path(absolutePath)}${options.format.success("!")}`,
+        `${options.format.success("Template")} ${formatQuotedValue(savedName, options.format)} ${options.format.success("added from")} ${options.format.path(absolutePath)}${options.format.success("!")}`,
     );
     return 0;
 }
@@ -921,7 +921,7 @@ function runRemoveCommand(command: RemoveCommandOptions, options: Required<Pick<
         throw new Error(`Couldn't find template with name "${command.name}".`);
     }
 
-    options.stdout(`${options.format.success("Template")} ${options.format.value(command.name)} ${options.format.success("removed!")}`);
+    options.stdout(`${options.format.success("Template")} ${formatQuotedValue(command.name, options.format)} ${options.format.success("removed!")}`);
     return 0;
 }
 
@@ -949,7 +949,9 @@ async function runAddCommand(command: AddCommandOptions, options: RegistryRunOpt
     const template = await registry.getTemplate(command.identifier);
 
     store.saveRemote(command.identifier, template.fileName, template.contents);
-    options.stdout(`${options.format.success("Template")} ${options.format.value(command.identifier)} ${options.format.success("was added to the local store!")}`);
+    options.stdout(
+        `${options.format.success("Template")} ${formatQuotedValue(command.identifier, options.format)} ${options.format.success("was added to the local store!")}`,
+    );
     return 0;
 }
 
@@ -1035,9 +1037,17 @@ async function runPublishCommand(command: PublishCommandOptions, options: Regist
     }
 
     options.stdout(
-        `${options.format.success("Template")} ${options.format.value(header.name)} ${options.format.success("published as")} ${options.format.path(`${session.username.toLowerCase()}/${header.name.toLowerCase()}`)}${options.format.success("!")}`,
+        `${options.format.success("Template")} ${options.format.value(header.name)} ${options.format.success("published as")} ${formatQuotedPath(`${session.username.toLowerCase()}/${header.name.toLowerCase()}`, options.format)}${options.format.success("!")}`,
     );
     return 0;
+}
+
+function formatQuotedValue(value: string, format: CliFormatter): string {
+    return `'${format.value(value)}'`;
+}
+
+function formatQuotedPath(value: string, format: CliFormatter): string {
+    return `'${format.path(value)}'`;
 }
 
 function resolveStoredOrLocalTemplatePath(

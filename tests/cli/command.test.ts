@@ -6,22 +6,22 @@ import { runCli } from "../../src/cli/command";
 
 const TEMPLATE = `--- MTRGEN ---
 name: cli-template
-filename: <% name|pascalCase %>.ts
-path: src/<% folder="components" %>
+filename: <% $name|pascalCase %>.ts
+path: src/<% $folder="components" %>
 defaults:
     title: "Hello"
 --- /MTRGEN ---
 
-export const title = "<% title %>";
+export const title = "<% $title %>";
 `;
 
 const REMOTE_TEMPLATE = `--- MTRGEN ---
 name: remote-component
-filename: <% name|pascalCase %>.tsx
-path: app/<% folder="widgets" %>
+filename: <% $name|pascalCase %>.tsx
+path: app/<% $folder="widgets" %>
 --- /MTRGEN ---
 
-export const component = "<% name %>";
+export const component = "<% $name %>";
 `;
 
 async function withTempDir<T>(fn: (tmpDir: string) => Promise<T> | T): Promise<T> {

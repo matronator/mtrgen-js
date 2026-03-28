@@ -10,11 +10,13 @@ type RequiredHeaderField = (typeof REQUIRED_HEADER_FIELDS)[number];
 
 export type DefaultValue = TemplateLiteralValue;
 export type TemplateDefaults = Record<string, DefaultValue>;
+export type TemplateSyntaxVersion = 1 | 2;
 
 export interface TemplateHeader {
     name: string;
     filename: string;
     path: string;
+    syntax?: TemplateSyntaxVersion;
     defaults?: TemplateDefaults;
 }
 
@@ -25,7 +27,7 @@ export class TemplateHeaders {
 
     static parse(input: string): TemplateHeader {
         const headerBlock = TemplateHeaders.#extractHeaderBlock(input);
-        const { fields, defaults } = TemplateHeaders.#parseHeaderBlock(headerBlock);
+        const { fields, syntax, defaults } = TemplateHeaders.#parseHeaderBlock(headerBlock);
 
         const missing = REQUIRED_HEADER_FIELDS.filter((field) => !fields[field]);
         if (missing.length > 0) {
@@ -36,6 +38,7 @@ export class TemplateHeaders {
             name: fields.name!,
             filename: fields.filename!,
             path: fields.path!,
+            ...(syntax !== undefined ? { syntax } : {}),
             ...(defaults ? { defaults } : {}),
         };
     }
@@ -56,10 +59,12 @@ export class TemplateHeaders {
 
     static #parseHeaderBlock(headerBlock: string): {
         fields: Partial<Record<RequiredHeaderField, string>>;
+        syntax?: TemplateSyntaxVersion;
         defaults?: TemplateDefaults;
     } {
         const rawLines = headerBlock.split(/\r?\n/);
         const fields: Partial<Record<RequiredHeaderField, string>> = {};
+        let syntax: TemplateSyntaxVersion | undefined;
         let defaultsLineIndex: number | null = null;
 
         for (let i = 0; i < rawLines.length; i++) {
@@ -74,6 +79,11 @@ export class TemplateHeaders {
                 break;
             }
 
+            if (kv.key === "syntax") {
+                syntax = TemplateHeaders.#parseSyntaxVersion(kv.value);
+                continue;
+            }
+
             if (TemplateHeaders.#isRequiredHeaderField(kv.key)) {
                 fields[kv.key] = kv.value;
             }
@@ -83,7 +93,12 @@ export class TemplateHeaders {
             ? undefined
             : TemplateHeaders.#parseDefaults(rawLines, defaultsLineIndex);
 
-        return { fields, ...(defaults ? { defaults } : {}) };
+        return { fields, ...(syntax !== undefined ? { syntax } : {}), ...(defaults ? { defaults } : {}) };
+    }
+
+    static #parseSyntaxVersion(raw: string): TemplateSyntaxVersion {
+        if (raw === "1" || raw === "2") return Number(raw) as TemplateSyntaxVersion;
+        throw new Error(`Invalid template syntax version "${raw}".`);
     }
 
     static #parseDefaults(rawLines: string[], defaultsLineIndex: number): TemplateDefaults | undefined {

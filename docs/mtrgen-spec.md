@@ -24,7 +24,7 @@ When `Parser.parseString()` evaluates a template, it processes it in this order:
 Default value precedence is:
 
 1. explicit runtime arguments
-2. inline variable defaults such as `<% name="Button" %>`
+2. inline variable defaults such as `<% $name="Button" %>`
 3. header defaults from `defaults:`
 
 ## 3. Template Structure
@@ -44,6 +44,7 @@ Recognized top-level header fields are:
 - `name`: required
 - `filename`: required
 - `path`: required
+- `syntax`: optional
 - `defaults`: optional
 
 Example:
@@ -51,8 +52,8 @@ Example:
 ```txt
 --- MTRGEN ---
 name: component
-filename: <% name|pascalCase %>.tsx
-path: src/<% folder="components" %>
+filename: <% $name|pascalCase %>.tsx
+path: src/<% $folder="components" %>
 defaults:
     folder: "components"
     title: "Hello"
@@ -113,12 +114,12 @@ Comment rules:
 Variable tags use `<% ... %>`:
 
 ```txt
-<% name %>
-<% user.profile.handle %>
-<% items[0] %>
-<% meta["folder"] %>
-<% meta[$field] %>
-<% title="Hello" %>
+<% $name %>
+<% $user.profile.handle %>
+<% $items[0] %>
+<% $meta["folder"] %>
+<% $meta[$field] %>
+<% $title="Hello" %>
 <% $name|pascalCase %>
 ```
 
@@ -130,21 +131,22 @@ lookup [= default] {| filter}
 
 Rules:
 
-- The lookup may optionally start with `$`.
+- By default, the lookup must start with `$`.
 - If the lookup resolves to `undefined`, the inline default is used when present.
 - If the value is still `undefined`, the parser checks header defaults.
 - In strict mode, an unresolved variable raises an error.
 - In non-strict mode, an unresolved variable expands to an empty string.
+- Templates may opt into legacy bare lookups with `syntax: 1` in the `MTRGEN` header.
 
 #### Lookups
 
 Lookups resolve against runtime arguments and may traverse nested values:
 
-- dot access: `user.name`
-- numeric index: `items[0]`
-- quoted property index: `meta["folder"]`, `meta['folder']`
-- bare bracket property: `meta[folder]`
-- dynamic bracket expression: `meta[$field]`, `items[$index]`
+- dot access: `$user.name`
+- numeric index: `$items[0]`
+- quoted property index: `$meta["folder"]`, `$meta['folder']`
+- bare bracket property: `$meta[folder]`
+- dynamic bracket expression: `$meta[$field]`, `$items[$index]`
 
 Lookup rules:
 
@@ -158,16 +160,16 @@ Lookup rules:
 Examples:
 
 ```txt
-<% name="world" %>
-<% retries=3 %>
-<% enabled=true %>
-<% tags=["a", "b"] %>
+<% $name="world" %>
+<% $retries=3 %>
+<% $enabled=true %>
+<% $tags=["a", "b"] %>
 ```
 
 Rules:
 
 - Inline defaults use the template literal syntax from section 6.
-- An empty inline default such as `<% name= %>` evaluates to the empty string.
+- An empty inline default such as `<% $name= %>` evaluates to the empty string.
 - In strict mode, a non-empty invalid inline default raises an error.
 - In non-strict mode, a non-empty invalid inline default is treated as raw text.
 
@@ -187,11 +189,11 @@ That means arrays still become comma-joined strings, while plain objects render 
 Filters are chained with `|`:
 
 ```txt
-<% name|upper %>
-<% name|pascalCase %>
-<% body|truncate:120,"..." %>
-<% count|pow:2 %>
-<% title|truncate:3,""|upper %>
+<% $name|upper %>
+<% $name|pascalCase %>
+<% $body|truncate:120,"..." %>
+<% $count|pow:2 %>
+<% $title|truncate:3,""|upper %>
 ```
 
 Filter rules:
@@ -289,7 +291,7 @@ Supported comparison operators:
 Operands may be:
 
 - literals such as `true`, `false`, `null`, numbers, strings, arrays, and objects
-- lookups such as `$name`, `user.name`, or `$items[0]`
+- lookups such as `$name`, `$user.name`, or `$items[0]`
 
 Condition evaluation rules:
 
@@ -320,19 +322,19 @@ This allows block tags on their own lines to disappear cleanly without leaving e
 Loop blocks use `for` and `endfor`:
 
 ```txt
-<% for item of items %>
-<% item %>
+<% for item of $items %>
+<% $item %>
 <% endfor %>
 ```
 
 Supported forms:
 
-- `<% for item of array %>`
-- `<% for [item, index] of array %>`
-- `<% for [item, key] of object %>`
-- `<% for item of object %>`
-- `<% for [_, index] of array %>`
-- `<% for [_, key] of object %>`
+- `<% for item of $array %>`
+- `<% for [item, index] of $array %>`
+- `<% for [item, key] of $object %>`
+- `<% for item of $object %>`
+- `<% for [_, index] of $array %>`
+- `<% for [_, key] of $object %>`
 
 Loop rules:
 
@@ -342,6 +344,25 @@ Loop rules:
 - Arrays iterate in index order.
 - Objects iterate with `Object.entries(...)` order.
 - A missing `endfor` raises an error.
+
+Loop position blocks are available inside `for` bodies:
+
+```txt
+<% for item of $items %>
+<% first %>[<% endfirst %>
+<% $item %><% sep %>, <% endsep %>
+<% last %>]<% endlast %>
+<% endfor %>
+```
+
+`empty` renders only when the iterable is empty and no iterations occur:
+
+```txt
+<% for item of $items %>
+<% $item %>
+<% empty %>No items<% endempty %>
+<% endfor %>
+```
 
 ## 6. Literal Syntax
 

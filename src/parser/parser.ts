@@ -1,13 +1,20 @@
 import { DefaultOptions, ParserOptions } from "./options";
 import { Filters } from "./filters";
-import { TemplateHeaders, type DefaultValue, type TemplateDefaults, type TemplateHeader } from "../template/header";
+import { TemplateHeaders, type DefaultValue, type TemplateDefaults, type TemplateHeader, type TemplateSyntaxVersion } from "../template/header";
 import { INVALID_TEMPLATE_LITERAL, parseTemplateLiteral } from "../template/literal";
 
 export const LITERALLY_NULL = Symbol("LITERALLY_NULL");
 
 export type ParserArgs = Record<string, unknown> | Array<Record<string, unknown>>;
 
-type ControlKeyword = "if" | "elseif" | "else" | "endif" | "for" | "endfor";
+type LoopBlockName = "first" | "last" | "sep" | "empty";
+type LegacyLoopBlockKeyword = `!${LoopBlockName}` | `/${LoopBlockName}`;
+type ModernLoopBlockKeyword = LoopBlockName | `end${LoopBlockName}`;
+type LoopBlockOpenKeyword = `!${LoopBlockName}` | LoopBlockName;
+type LoopBlockCloseKeyword = `/${LoopBlockName}` | `end${LoopBlockName}`;
+type LoopBlockKeyword = LegacyLoopBlockKeyword | ModernLoopBlockKeyword;
+type ControlKeyword = "if" | "elseif" | "else" | "endif" | "for" | "endfor" | LoopBlockKeyword;
+type NestedBlock = "if" | "for" | LoopBlockName;
 
 type ConditionBranch = {
     condition: string | null;
@@ -29,6 +36,13 @@ type LoopBindings = {
     key?: string;
 };
 
+type LoopContext = {
+    index: number;
+    length: number;
+    isFirst: boolean;
+    isLast: boolean;
+};
+
 type ExpressionToken =
     | { type: "identifier"; value: string }
     | { type: "string"; value: string }
@@ -43,7 +57,10 @@ type ExpressionState = {
     tokens: ExpressionToken[];
     index: number;
     args: Array<Record<string, unknown>>;
+    syntaxVersion: TemplateSyntaxVersion;
 };
+
+type OperatorTokenValue = Extract<ExpressionToken, { type: "operator" }>["value"];
 
 export class Parser {
     public static VARIABLE_PATTERN = /<%\s?((?!endif|else)[a-zA-Z0-9_]+)(=.*?)?(\|([a-zA-Z0-9_]+?)(?:\:(?:(?:\\?\'|\\?")?.?(?:\\?\'|\\?")?,?)+?)*?)?\s?%>/m;
@@ -53,25 +70,53 @@ export class Parser {
     public static COMMENT_PATTERN = /<#\s?(.*?)\s?#>/ms;
 
     static #TAG_PATTERN = /<%\s*([\s\S]*?)\s*%>/m;
-    static #CONTROL_KEYWORDS = new Set<ControlKeyword>(["if", "elseif", "else", "endif", "for", "endfor"]);
+    static #CONTROL_KEYWORDS = new Set<ControlKeyword>([
+        "if",
+        "elseif",
+        "else",
+        "endif",
+        "for",
+        "endfor",
+        "!first",
+        "!last",
+        "!sep",
+        "!empty",
+        "/first",
+        "/last",
+        "/sep",
+        "/empty",
+        "first",
+        "last",
+        "sep",
+        "empty",
+        "endfirst",
+        "endlast",
+        "endsep",
+        "endempty",
+    ]);
 
     public static parseString(text: string, args?: ParserArgs, strict?: boolean): string;
     public static parseString(text: string, args?: ParserArgs, options?: ParserOptions): string;
     public static parseString<T>(text: T, args?: ParserArgs, options?: boolean | ParserOptions): T;
-    public static parseString(text: unknown, args: ParserArgs = {}, options: boolean | ParserOptions = DefaultOptions): unknown {
+    public static parseString(text: unknown, args: ParserArgs = {}, options?: boolean | ParserOptions): unknown {
         if (typeof text !== "string") return text;
 
-        const normalizedOptions = Parser.#normalizeOptions(options);
+        const explicitSyntaxVersion = options && typeof options !== "boolean" ? options.syntaxVersion : undefined;
+        const normalizedOptions = Parser.#normalizeOptions(options ?? DefaultOptions);
         const argsList = Parser.#normalizeArgs(args);
         const header = TemplateHeaders.has(text) ? TemplateHeaders.parse(text) : undefined;
+        const resolvedOptions = {
+            ...normalizedOptions,
+            syntaxVersion: explicitSyntaxVersion ?? header?.syntax ?? DefaultOptions.syntaxVersion ?? 2,
+        };
         const templateDefaults = {
-            ...(normalizedOptions.templateDefaults ?? {}),
+            ...(resolvedOptions.templateDefaults ?? {}),
             ...(header?.defaults ?? {}),
         };
 
         const stripped = header ? TemplateHeaders.strip(text) : text;
-        const uncommented = Parser.removeComments(stripped, normalizedOptions);
-        return Parser.#renderTemplate(uncommented, argsList, templateDefaults, normalizedOptions);
+        const uncommented = Parser.removeComments(stripped, resolvedOptions);
+        return Parser.#renderTemplate(uncommented, argsList, templateDefaults, resolvedOptions);
     }
 
     public static getTemplateHeader(input: string): TemplateHeader {
@@ -101,14 +146,14 @@ export class Parser {
         let parsed = text;
 
         while (true) {
-            const tag = Parser.#nextTag(parsed, offset);
+            const tag = Parser.#nextTag(parsed, offset, options);
             if (!tag) break;
             if (tag.keyword !== "if") {
                 offset = tag.end;
                 continue;
             }
 
-            const block = Parser.#findIfBlock(parsed, tag);
+            const block = Parser.#findIfBlock(parsed, tag, options);
             const replacement = Parser.#renderConditionBranches(block.branches, args, options);
             parsed = Parser.#replaceRange(parsed, tag.controlStart, block.afterEnd - tag.controlStart, replacement);
             offset = tag.controlStart + replacement.length;
@@ -127,7 +172,7 @@ export class Parser {
         let offset = 0;
 
         while (true) {
-            const tag = Parser.#nextTag(parsed, offset);
+            const tag = Parser.#nextTag(parsed, offset, options);
             if (!tag) break;
 
             if (tag.keyword && Parser.#CONTROL_KEYWORDS.has(tag.keyword)) {
@@ -153,22 +198,23 @@ export class Parser {
         args: Array<Record<string, unknown>>,
         templateDefaults: TemplateDefaults,
         options: ParserOptions,
+        loopContext?: LoopContext,
     ): string {
         let parsed = text;
         let offset = 0;
         const expressionArgs = [ ...args, templateDefaults ];
 
         while (true) {
-            const tag = Parser.#nextTag(parsed, offset);
+            const tag = Parser.#nextTag(parsed, offset, options);
             if (!tag) break;
 
             if (tag.keyword === "if") {
-                const block = Parser.#findIfBlock(parsed, tag);
+                const block = Parser.#findIfBlock(parsed, tag, options);
                 const branch = block.branches.find((candidate) =>
-                    candidate.condition === null || Parser.#evaluateCondition(candidate.condition, expressionArgs),
+                    candidate.condition === null || Parser.#evaluateCondition(candidate.condition, expressionArgs, options.syntaxVersion ?? 2),
                 );
                 const replacement = branch
-                    ? Parser.#renderTemplate(branch.content, args, templateDefaults, options)
+                    ? Parser.#renderTemplate(branch.content, args, templateDefaults, options, loopContext)
                     : "";
 
                 parsed = Parser.#replaceRange(parsed, tag.controlStart, block.afterEnd - tag.controlStart, replacement);
@@ -177,11 +223,30 @@ export class Parser {
             }
 
             if (tag.keyword === "for") {
-                const block = Parser.#findForBlock(parsed, tag);
+                const block = Parser.#findForBlock(parsed, tag, options);
                 const replacement = Parser.#renderForBlock(tag.inner, block.content, expressionArgs, templateDefaults, options);
                 parsed = Parser.#replaceRange(parsed, tag.controlStart, block.afterEnd - tag.controlStart, replacement);
                 offset = tag.controlStart + replacement.length;
                 continue;
+            }
+
+            if (tag.keyword && Parser.#isLoopBlockOpenKeyword(tag.keyword)) {
+                if (!loopContext) {
+                    throw new Error(`Unexpected <% ${tag.keyword} %> tag outside <% for %> block.`);
+                }
+
+                const block = Parser.#findLoopBlock(parsed, tag, options);
+                const replacement = Parser.#shouldRenderLoopBlock(tag.keyword, loopContext)
+                    ? Parser.#renderTemplate(block.content, args, templateDefaults, options, loopContext)
+                    : "";
+
+                parsed = Parser.#replaceRange(parsed, tag.controlStart, block.afterEnd - tag.controlStart, replacement);
+                offset = tag.controlStart + replacement.length;
+                continue;
+            }
+
+            if (tag.keyword && Parser.#isLoopBlockCloseKeyword(tag.keyword)) {
+                throw new Error(`Unexpected <% ${tag.keyword} %> tag.`);
             }
 
             if (tag.keyword && Parser.#CONTROL_KEYWORDS.has(tag.keyword)) {
@@ -203,7 +268,7 @@ export class Parser {
         options: ParserOptions,
     ): string {
         const branch = branches.find((candidate) =>
-            candidate.condition === null || Parser.#evaluateCondition(candidate.condition, args),
+            candidate.condition === null || Parser.#evaluateCondition(candidate.condition, args, options.syntaxVersion ?? 2),
         );
         if (!branch) return "";
         return Parser.parseConditions(branch.content, args, 0, options);
@@ -222,28 +287,87 @@ export class Parser {
             throw new Error(`Invalid <% for %> tag: ${rawTag}`);
         }
 
-        const bindings = Parser.#parseLoopBindings(statement.slice(0, separator));
+        const bindings = Parser.#parseLoopBindings(statement.slice(0, separator), options.syntaxVersion ?? 2);
         const iterableExpression = statement.slice(separator + 4).trim();
         if (!iterableExpression) {
             throw new Error(`Invalid <% for %> tag: ${rawTag}`);
         }
 
-        const iterable = Parser.#evaluateExpression(iterableExpression, args);
-        if (Array.isArray(iterable)) {
-            return iterable.map((item, index) => {
-                const scope = Parser.#createLoopScope(bindings, item, index);
-                return Parser.#renderTemplate(content, [scope, ...args], templateDefaults, options);
-            }).join("");
-        }
+        const iterable = Parser.#evaluateExpression(iterableExpression, args, options.syntaxVersion ?? 2);
+        if (Array.isArray(iterable) || (iterable && typeof iterable === "object")) {
+            const iterations = Array.isArray(iterable)
+                ? iterable.map((item, index) => ({ item, key: index }))
+                : Object.entries(iterable).map(([key, item]) => ({ item, key }));
 
-        if (iterable && typeof iterable === "object") {
-            return Object.entries(iterable).map(([key, item]) => {
+            if (iterations.length === 0) {
+                return Parser.#renderEmptyLoopBlocks(content, args, templateDefaults, options);
+            }
+
+            return iterations.map(({ item, key }, index) => {
                 const scope = Parser.#createLoopScope(bindings, item, key);
-                return Parser.#renderTemplate(content, [scope, ...args], templateDefaults, options);
+                const loopContext: LoopContext = {
+                    index,
+                    length: iterations.length,
+                    isFirst: index === 0,
+                    isLast: index === iterations.length - 1,
+                };
+
+                return Parser.#renderTemplate(content, [scope, ...args], templateDefaults, options, loopContext);
             }).join("");
         }
 
         return "";
+    }
+
+    static #renderEmptyLoopBlocks(
+        text: string,
+        args: Array<Record<string, unknown>>,
+        templateDefaults: TemplateDefaults,
+        options: ParserOptions,
+    ): string {
+        let parsed = "";
+        let offset = 0;
+
+        while (true) {
+            const tag = Parser.#nextTag(text, offset, options);
+            if (!tag) break;
+
+            if (tag.keyword === "if") {
+                const block = Parser.#findIfBlock(text, tag, options);
+                const branch = block.branches.find((candidate) =>
+                    candidate.condition === null || Parser.#evaluateCondition(candidate.condition, [...args, templateDefaults], options.syntaxVersion ?? 2),
+                );
+                if (branch) {
+                    parsed += Parser.#renderEmptyLoopBlocks(branch.content, args, templateDefaults, options);
+                }
+                offset = block.afterEnd;
+                continue;
+            }
+
+            if (tag.keyword === "for") {
+                const block = Parser.#findForBlock(text, tag, options);
+                offset = block.afterEnd;
+                continue;
+            }
+
+            if (tag.keyword && Parser.#isLoopBlockOpenKeyword(tag.keyword)) {
+                const block = Parser.#findLoopBlock(text, tag, options);
+                if (Parser.#getLoopBlockName(tag.keyword) === "empty") {
+                    parsed += Parser.#renderTemplate(block.content, args, templateDefaults, options);
+                }
+                offset = block.afterEnd;
+                continue;
+            }
+
+            if (tag.keyword && (Parser.#isLoopBlockCloseKeyword(tag.keyword) || Parser.#CONTROL_KEYWORDS.has(tag.keyword))) {
+                offset = tag.end;
+                continue;
+            }
+
+            offset = tag.end;
+        }
+
+        return parsed;
     }
 
     static #createLoopScope(bindings: LoopBindings, item: unknown, key: unknown): Record<string, unknown> {
@@ -298,12 +422,12 @@ export class Parser {
         return -1;
     }
 
-    static #parseLoopBindings(raw: string): LoopBindings {
+    static #parseLoopBindings(raw: string, syntaxVersion: TemplateSyntaxVersion): LoopBindings {
         const trimmed = raw.trim();
         if (!trimmed) throw new Error("Missing loop bindings.");
 
         if (!trimmed.startsWith("[")) {
-            return { item: Parser.#normalizeBindingName(trimmed) };
+            return { item: Parser.#normalizeBindingName(trimmed, syntaxVersion) };
         }
 
         if (!trimmed.endsWith("]")) {
@@ -316,21 +440,26 @@ export class Parser {
         }
 
         return {
-            item: Parser.#normalizeBindingName(parts[0] ?? ""),
-            key: Parser.#normalizeBindingName(parts[1] ?? ""),
+            item: Parser.#normalizeBindingName(parts[0] ?? "", syntaxVersion),
+            key: Parser.#normalizeBindingName(parts[1] ?? "", syntaxVersion),
         };
     }
 
-    static #normalizeBindingName(raw: string): string {
-        const trimmed = raw.trim().replace(/^\$/, "");
-        if (trimmed === "_") return trimmed;
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+    static #normalizeBindingName(raw: string, syntaxVersion: TemplateSyntaxVersion): string {
+        const trimmed = raw.trim();
+        if (syntaxVersion === 2 && trimmed.startsWith("$")) {
+            throw new Error(`Loop bindings must be bare identifiers. Use "${trimmed.slice(1)}" instead of "${trimmed}".`);
+        }
+
+        const normalized = trimmed.replace(/^\$/, "");
+        if (normalized === "_") return normalized;
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(normalized)) {
             throw new Error(`Invalid loop variable "${raw}".`);
         }
-        return trimmed;
+        return normalized;
     }
 
-    static #nextTag(text: string, offset: number): TagInfo | null {
+    static #nextTag(text: string, offset: number, options: ParserOptions): TagInfo | null {
         const match = Parser.#execFrom(text, Parser.#TAG_PATTERN, offset);
         if (!match) return null;
 
@@ -338,8 +467,7 @@ export class Parser {
         const inner = (match[1] ?? "").trim();
         const start = match.index;
         const end = start + raw.length;
-        const keywordMatch = /^(if|elseif|else|endif|for|endfor)\b/.exec(inner);
-        const keyword = (keywordMatch?.[1] as ControlKeyword | undefined) ?? null;
+        const keyword = Parser.#parseTagKeyword(inner, options.syntaxVersion ?? 2);
         const standaloneControlTag = keyword ? Parser.#isStandaloneControlTag(text, start, end) : false;
         const shouldConsumeTrailingLineBreak = keyword ? Parser.#isLineSuffixWhitespaceOnly(text, end) : false;
         const controlStart = standaloneControlTag ? Parser.#lineStartIfWhitespaceOnly(text, start) : start;
@@ -354,6 +482,23 @@ export class Parser {
             controlStart,
             controlEnd,
         };
+    }
+
+    static #parseTagKeyword(inner: string, syntaxVersion: TemplateSyntaxVersion): ControlKeyword | null {
+        if (syntaxVersion === 2) {
+            const modernLoopKeywordMatch = /^(first|last|sep|empty|endfirst|endlast|endsep|endempty)$/.exec(inner);
+            if (modernLoopKeywordMatch) {
+                return inner as ControlKeyword;
+            }
+        }
+
+        const legacyLoopKeywordMatch = /^(?:!(first|last|sep|empty)|\/(first|last|sep|empty))$/.exec(inner);
+        if (legacyLoopKeywordMatch) {
+            return inner as LegacyLoopBlockKeyword;
+        }
+
+        const keywordMatch = /^(if|elseif|else|endif|for|endfor)\b/.exec(inner);
+        return (keywordMatch?.[1] as ControlKeyword | undefined) ?? null;
     }
 
     static #consumeTrailingLineBreak(text: string, end: number): number {
@@ -377,37 +522,39 @@ export class Parser {
         return /^[\t ]*$/.test(text.slice(end, lineEnd));
     }
 
-    static #findIfBlock(text: string, openTag: TagInfo): { branches: ConditionBranch[]; afterEnd: number } {
+    static #findIfBlock(text: string, openTag: TagInfo, options: ParserOptions): { branches: ConditionBranch[]; afterEnd: number } {
         let cursor = openTag.controlEnd;
-        let currentCondition = Parser.#parseConditionTag(openTag.inner, "if");
+        let currentCondition: string | null = Parser.#parseConditionTag(openTag.inner, "if");
         let currentContentStart = openTag.controlEnd;
         const branches: ConditionBranch[] = [];
-        const nestedBlocks: Array<"if" | "for"> = [];
+        const nestedBlocks: NestedBlock[] = [];
         let seenElse = false;
 
         while (true) {
-            const tag = Parser.#nextTag(text, cursor);
+            const tag = Parser.#nextTag(text, cursor, options);
             if (!tag) throw new Error("Missing <% endif %> tag.");
 
             cursor = tag.end;
             if (!tag.keyword) continue;
 
-            if (tag.keyword === "if" || tag.keyword === "for") {
-                nestedBlocks.push(tag.keyword);
+            if (Parser.#pushNestedBlock(nestedBlocks, tag.keyword)) {
                 continue;
             }
 
-            if (tag.keyword === "endif" || tag.keyword === "endfor") {
+            if (Parser.#isClosingKeyword(tag.keyword)) {
                 if (nestedBlocks.length > 0) {
-                    const expected = nestedBlocks[nestedBlocks.length - 1];
-                    if ((tag.keyword === "endif" && expected === "if") || (tag.keyword === "endfor" && expected === "for")) {
-                        nestedBlocks.pop();
+                    if (Parser.#consumeNestedClosingTag(nestedBlocks, tag.keyword)) {
                         continue;
                     }
+
+                    throw new Error(`Unexpected <% ${tag.keyword} %> tag inside <% if %> block.`);
                 }
 
                 if (tag.keyword === "endfor") {
                     throw new Error("Unexpected <% endfor %> tag inside <% if %> block.");
+                }
+                if (Parser.#isLoopBlockCloseKeyword(tag.keyword)) {
+                    throw new Error(`Unexpected <% ${tag.keyword} %> tag inside <% if %> block.`);
                 }
 
                 branches.push({
@@ -438,33 +585,35 @@ export class Parser {
         }
     }
 
-    static #findForBlock(text: string, openTag: TagInfo): { content: string; afterEnd: number } {
+    static #findForBlock(text: string, openTag: TagInfo, options: ParserOptions): { content: string; afterEnd: number } {
         let cursor = openTag.controlEnd;
-        const nestedBlocks: Array<"if" | "for"> = [];
+        const nestedBlocks: NestedBlock[] = [];
 
         while (true) {
-            const tag = Parser.#nextTag(text, cursor);
+            const tag = Parser.#nextTag(text, cursor, options);
             if (!tag) throw new Error("Missing <% endfor %> tag.");
 
             cursor = tag.end;
             if (!tag.keyword) continue;
 
-            if (tag.keyword === "if" || tag.keyword === "for") {
-                nestedBlocks.push(tag.keyword);
+            if (Parser.#pushNestedBlock(nestedBlocks, tag.keyword)) {
                 continue;
             }
 
-            if (tag.keyword === "endif" || tag.keyword === "endfor") {
+            if (Parser.#isClosingKeyword(tag.keyword)) {
                 if (nestedBlocks.length > 0) {
-                    const expected = nestedBlocks[nestedBlocks.length - 1];
-                    if ((tag.keyword === "endif" && expected === "if") || (tag.keyword === "endfor" && expected === "for")) {
-                        nestedBlocks.pop();
+                    if (Parser.#consumeNestedClosingTag(nestedBlocks, tag.keyword)) {
                         continue;
                     }
+
+                    throw new Error(`Unexpected <% ${tag.keyword} %> tag inside <% for %> block.`);
                 }
 
                 if (tag.keyword === "endif") {
                     throw new Error("Unexpected <% endif %> tag inside <% for %> block.");
+                }
+                if (Parser.#isLoopBlockCloseKeyword(tag.keyword)) {
+                    throw new Error(`Unexpected <% ${tag.keyword} %> tag inside <% for %> block.`);
                 }
 
                 return {
@@ -472,6 +621,123 @@ export class Parser {
                     afterEnd: tag.controlEnd,
                 };
             }
+        }
+    }
+
+    static #findLoopBlock(text: string, openTag: TagInfo, options: ParserOptions): { content: string; afterEnd: number } {
+        if (!openTag.keyword || !Parser.#isLoopBlockOpenKeyword(openTag.keyword)) {
+            throw new Error(`Invalid loop block tag: ${openTag.raw}`);
+        }
+
+        const closingKeyword = Parser.#getLoopBlockClosingKeyword(openTag.keyword);
+        let cursor = openTag.controlEnd;
+        const nestedBlocks: NestedBlock[] = [];
+
+        while (true) {
+            const tag = Parser.#nextTag(text, cursor, options);
+            if (!tag) throw new Error(`Missing <% ${closingKeyword} %> tag.`);
+
+            cursor = tag.end;
+            if (!tag.keyword) continue;
+
+            if (Parser.#pushNestedBlock(nestedBlocks, tag.keyword)) {
+                continue;
+            }
+
+            if (Parser.#isClosingKeyword(tag.keyword)) {
+                if (nestedBlocks.length > 0) {
+                    if (Parser.#consumeNestedClosingTag(nestedBlocks, tag.keyword)) {
+                        continue;
+                    }
+
+                    throw new Error(`Unexpected <% ${tag.keyword} %> tag inside <% ${openTag.keyword} %> block.`);
+                }
+
+                if (tag.keyword === closingKeyword) {
+                    return {
+                        content: text.slice(openTag.controlEnd, tag.controlStart),
+                        afterEnd: tag.controlEnd,
+                    };
+                }
+
+                throw new Error(`Unexpected <% ${tag.keyword} %> tag inside <% ${openTag.keyword} %> block.`);
+            }
+        }
+    }
+
+    static #pushNestedBlock(nestedBlocks: NestedBlock[], keyword: ControlKeyword): boolean {
+        if (keyword === "if" || keyword === "for") {
+            nestedBlocks.push(keyword);
+            return true;
+        }
+
+        if (Parser.#isLoopBlockOpenKeyword(keyword)) {
+            nestedBlocks.push(Parser.#getLoopBlockName(keyword));
+            return true;
+        }
+
+        return false;
+    }
+
+    static #consumeNestedClosingTag(nestedBlocks: NestedBlock[], keyword: ControlKeyword): boolean {
+        const expected = nestedBlocks[nestedBlocks.length - 1];
+        if (!expected) return false;
+
+        if ((keyword === "endif" && expected === "if") || (keyword === "endfor" && expected === "for")) {
+            nestedBlocks.pop();
+            return true;
+        }
+
+        if (
+            expected !== "if" &&
+            expected !== "for" &&
+            Parser.#isLoopBlockCloseKeyword(keyword) &&
+            Parser.#getLoopBlockName(keyword) === expected
+        ) {
+            nestedBlocks.pop();
+            return true;
+        }
+
+        return false;
+    }
+
+    static #isClosingKeyword(keyword: ControlKeyword): keyword is "endif" | "endfor" | LoopBlockCloseKeyword {
+        return keyword === "endif" || keyword === "endfor" || Parser.#isLoopBlockCloseKeyword(keyword);
+    }
+
+    static #isLoopBlockOpenKeyword(keyword: ControlKeyword): keyword is LoopBlockOpenKeyword {
+        return keyword === "!first" || keyword === "!last" || keyword === "!sep" || keyword === "!empty"
+            || keyword === "first" || keyword === "last" || keyword === "sep" || keyword === "empty";
+    }
+
+    static #isLoopBlockCloseKeyword(keyword: ControlKeyword): keyword is LoopBlockCloseKeyword {
+        return keyword === "/first" || keyword === "/last" || keyword === "/sep" || keyword === "/empty"
+            || keyword === "endfirst" || keyword === "endlast" || keyword === "endsep" || keyword === "endempty";
+    }
+
+    static #getLoopBlockName(keyword: LoopBlockKeyword): LoopBlockName {
+        if (keyword.startsWith("!")) return keyword.slice(1) as LoopBlockName;
+        if (keyword.startsWith("/")) return keyword.slice(1) as LoopBlockName;
+        if (keyword.startsWith("end")) return keyword.slice(3) as LoopBlockName;
+        return keyword as LoopBlockName;
+    }
+
+    static #getLoopBlockClosingKeyword(keyword: LoopBlockOpenKeyword): LoopBlockCloseKeyword {
+        const name = Parser.#getLoopBlockName(keyword);
+        if (keyword.startsWith("!")) return `/${name}` as `/${LoopBlockName}`;
+        return `end${name}` as `end${LoopBlockName}`;
+    }
+
+    static #shouldRenderLoopBlock(keyword: LoopBlockOpenKeyword, loopContext: LoopContext): boolean {
+        switch (Parser.#getLoopBlockName(keyword)) {
+            case "first":
+                return loopContext.isFirst;
+            case "last":
+                return loopContext.isLast;
+            case "sep":
+                return !loopContext.isLast;
+            case "empty":
+                return false;
         }
     }
 
@@ -501,15 +767,15 @@ export class Parser {
         return re.exec(text);
     }
 
-    static #evaluateCondition(expression: string, args: Array<Record<string, unknown>>): boolean {
-        return Boolean(Parser.#evaluateExpression(expression, args));
+    static #evaluateCondition(expression: string, args: Array<Record<string, unknown>>, syntaxVersion: TemplateSyntaxVersion): boolean {
+        return Boolean(Parser.#evaluateExpression(expression, args, syntaxVersion));
     }
 
-    static #evaluateExpression(expression: string, args: Array<Record<string, unknown>>): unknown {
+    static #evaluateExpression(expression: string, args: Array<Record<string, unknown>>, syntaxVersion: TemplateSyntaxVersion): unknown {
         const tokens = Parser.#tokenizeExpression(expression);
         if (tokens.length === 0) return undefined;
 
-        const state: ExpressionState = { tokens, index: 0, args };
+        const state: ExpressionState = { tokens, index: 0, args, syntaxVersion };
         const value = Parser.#parseOrExpression(state);
         if (state.index !== tokens.length) {
             throw new Error(`Invalid expression "${expression}".`);
@@ -532,13 +798,13 @@ export class Parser {
             const slice = expression.slice(index);
             const multiOperator = /^(===|!==|&&|\|\||<=|>=|==|!=)/.exec(slice);
             if (multiOperator) {
-                tokens.push({ type: "operator", value: multiOperator[1] as ExpressionToken["value"] });
+                tokens.push({ type: "operator", value: multiOperator[1] as OperatorTokenValue });
                 index += multiOperator[1].length;
                 continue;
             }
 
             if (["<", ">", "!"].includes(char)) {
-                tokens.push({ type: "operator", value: char as ExpressionToken["value"] });
+                tokens.push({ type: "operator", value: char as OperatorTokenValue });
                 index++;
                 continue;
             }
@@ -747,6 +1013,9 @@ export class Parser {
             if (token.value === "true") return true;
             if (token.value === "false") return false;
             if (token.value === "null") return null;
+            if (state.syntaxVersion === 2) {
+                throw new Error(`Bare variable references are not allowed in syntax v2 expressions. Use "$${token.value}".`);
+            }
         }
 
         const base = token.value.startsWith("$") ? token.value.slice(1) : token.value;
@@ -864,13 +1133,13 @@ export class Parser {
         return Number.isFinite(asNumber) ? asNumber : null;
     }
 
-    static #resolveToken(token: string, args: Array<Record<string, unknown>>): unknown {
+    static #resolveToken(token: string, args: Array<Record<string, unknown>>, syntaxVersion: TemplateSyntaxVersion): unknown {
         const literal = Parser.parseLiteral(token);
         if (literal !== LITERALLY_NULL) return literal;
 
         const trimmed = token.trim();
         if (!trimmed) return undefined;
-        return Parser.#evaluateExpression(trimmed, args);
+        return Parser.#evaluateExpression(trimmed, args, syntaxVersion);
     }
 
     static #normalizeArgs(args: ParserArgs): Array<Record<string, unknown>> {
@@ -903,16 +1172,19 @@ export class Parser {
         const equalsIndex = variablePart.indexOf("=");
         const variableName = (equalsIndex === -1 ? variablePart : variablePart.slice(0, equalsIndex)).trim();
         if (!variableName) return "";
+        if ((options.syntaxVersion ?? 2) === 2 && !variableName.startsWith("$")) {
+            throw new Error(`Bare variable references are not allowed in syntax v2. Use "$${variableName}" instead of "${variableName}".`);
+        }
 
         const defaultRaw = equalsIndex === -1 ? undefined : variablePart.slice(equalsIndex + 1);
         const hasDefault = defaultRaw !== undefined;
 
-        let value = Parser.#resolveToken(variableName, args);
+        let value = Parser.#resolveToken(variableName, args, options.syntaxVersion ?? 2);
         if (value === undefined && hasDefault) {
             value = Parser.#parseDefaultValue(defaultRaw ?? "", options);
         }
         if (value === undefined) {
-            value = Parser.#resolveToken(variableName, [templateDefaults, ...args]);
+            value = Parser.#resolveToken(variableName, [templateDefaults, ...args], options.syntaxVersion ?? 2);
         }
 
         if (value === undefined) {

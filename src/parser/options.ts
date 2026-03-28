@@ -1,4 +1,4 @@
-import type { TemplateDefaults } from "../template/header";
+import type { TemplateDefaults, TemplateSyntaxVersion } from "../template/header";
 
 export interface ParserOptions {
     strict?: boolean;
@@ -6,6 +6,7 @@ export interface ParserOptions {
     trimBeforeBlocks?: boolean;
     trimAfterBlocks?: boolean;
     templateDefaults?: TemplateDefaults;
+    syntaxVersion?: TemplateSyntaxVersion;
 }
 
 export interface PatternOptions {
@@ -18,4 +19,5 @@ export const DefaultOptions: ParserOptions = {
     strict: true,
     patterns: {},
     templateDefaults: {},
+    syntaxVersion: 2,
 };

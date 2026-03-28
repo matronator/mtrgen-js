@@ -3,7 +3,7 @@ import { Parser } from "../../src/parser/parser";
 
 describe("Parser (conditions)", () => {
     it("parses a simple condition", () => {
-        const template = "<% if $foo === true %><% bar %> <% endif %>World!";
+        const template = "<% if $foo === true %><% $bar %> <% endif %>World!";
         const args1 = { foo: true, bar: "Hello" };
         const args2 = { foo: false, bar: "Hello" };
 
@@ -162,7 +162,7 @@ describe("Parser (conditions)", () => {
 <% if !$allowMintToAll %>
     (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
 <% endif %>
-    (ft-mint? <% name|kebabCase %> amount recipient)
+    (ft-mint? <% $name|kebabCase %> amount recipient)
 )
 )
 <% endif %>

@@ -135,14 +135,14 @@ Every generator template starts with an `MTRGEN` header:
 ```txt
 --- MTRGEN ---
 name: component
-filename: <% name|pascalCase %>.tsx
-path: src/<% folder="components" %>
+filename: <% $name|pascalCase %>.tsx
+path: src/<% $folder="components" %>
 defaults:
     title: "Hello"
     enabled: true
 --- /MTRGEN ---
 
-export const title = "<% title %>";
+export const title = "<% $title %>";
 ```
 
 Required header fields:
@@ -160,24 +160,26 @@ Optional header fields:
 Variable tags use `<% ... %>`:
 
 ```txt
-Hello <% name %>!
+Hello <% $name %>!
 ```
 
 Variables support inline defaults:
 
 ```txt
-Hello <% name="world" %>!
+Hello <% $name="world" %>!
 ```
 
 Lookup supports nested properties and array indexes:
 
 ```txt
-<% user.name %>
-<% user.profile.handle %>
-<% items[0] %>
-<% meta["folder"] %>
-<% meta[$field] %>
+<% $user.name %>
+<% $user.profile.handle %>
+<% $items[0] %>
+<% $meta["folder"] %>
+<% $meta[$field] %>
 ```
+
+All variable lookups are `$`-prefixed by default. If you need the legacy bare-lookup behavior, you can opt a template into `syntax: 1` in its `MTRGEN` header.
 
 Plain objects are interpolated as JSON instead of `[object Object]`.
 
@@ -186,7 +188,7 @@ Plain objects are interpolated as JSON instead of `[object Object]`.
 When the same value exists in multiple places, precedence is:
 
 1. explicit runtime arguments
-2. inline variable defaults like `<% name="Button" %>`
+2. inline variable defaults like `<% $name="Button" %>`
 3. header defaults in the `defaults:` block
 
 ## Literals
@@ -207,9 +209,9 @@ Multiline arrays and objects are supported inside the header `defaults:` block.
 Filters are chained with `|`:
 
 ```txt
-<% name|pascalCase %>
-<% title|truncate:30,"..." %>
-<% foo|truncate:3,""|upper %>
+<% $name|pascalCase %>
+<% $title|truncate:30,"..." %>
+<% $foo|truncate:3,""|upper %>
 ```
 
 Available filters:
@@ -223,11 +225,11 @@ Available filters:
 Examples:
 
 ```txt
-<% name|upper %>
-<% componentName|pascalCase %>
-<% body|truncate:120,"..." %>
-<% url|encode:"base64" %>
-<% count|pow:2 %>
+<% $name|upper %>
+<% $componentName|pascalCase %>
+<% $body|truncate:120,"..." %>
+<% $url|encode:"base64" %>
+<% $count|pow:2 %>
 ```
 
 ## Conditions
@@ -267,11 +269,11 @@ Example:
 
 ```txt
 <% if ($kind === "service" && $enabled) || !$fallback %>
-export class <% name|pascalCase %>Service {}
+export class <% $name|pascalCase %>Service {}
 <% elseif !$enabled %>
 // disabled
 <% else %>
-export const <% name %> = true;
+export const <% $name %> = true;
 <% endif %>
 ```
 
@@ -280,19 +282,38 @@ export const <% name %> = true;
 Loop blocks use `for` and `endfor`:
 
 ```txt
-<% for item of items %>
-<% item %>
+<% for item of $items %>
+<% $item %>
 <% endfor %>
 ```
 
 Supported forms:
 
-- `<% for item of array %>`
-- `<% for [item, index] of array %>`
-- `<% for [item, key] of object %>`
-- `<% for item of object %>`
-- `<% for [_, index] of array %>`
-- `<% for [_, key] of object %>`
+- `<% for item of $array %>`
+- `<% for [item, index] of $array %>`
+- `<% for [item, key] of $object %>`
+- `<% for item of $object %>`
+- `<% for [_, index] of $array %>`
+- `<% for [_, key] of $object %>`
+
+Loop position blocks are also available inside `for` bodies:
+
+```txt
+<% for item of $items %>
+<% first %>[<% endfirst %>
+<% $item %><% sep %>, <% endsep %>
+<% last %>]<% endlast %>
+<% endfor %>
+```
+
+`empty` renders only when the iterable has no entries:
+
+```txt
+<% for item of $items %>
+<% $item %>
+<% empty %>No items<% endempty %>
+<% endfor %>
+```
 
 ## Comments
 
@@ -311,18 +332,18 @@ import { Generator, Parser } from "mtrgen";
 
 const template = `--- MTRGEN ---
 name: component
-filename: <% name|pascalCase %>.ts
+filename: <% $name|pascalCase %>.ts
 path: src/components
 --- /MTRGEN ---
 
-export const name = "<% name %>";
+export const name = "<% $name %>";
 `;
 
 const file = Generator.parseTemplate(template, { name: "button" });
 console.log(file.filePath);
 console.log(file.contents);
 
-console.log(Parser.parseString("Hello <% name %>!", { name: "world" }));
+console.log(Parser.parseString("Hello <% $name %>!", { name: "world" }));
 ```
 
 Generate from a template file and write it to disk:

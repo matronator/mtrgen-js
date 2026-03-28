@@ -6,14 +6,14 @@ import { Generator } from "../../src/generator/generator";
 
 const TEST_TEMPLATE = `--- MTRGEN ---
 name: js-template
-filename: <% name %>.js
+filename: <% $name %>.js
 path: assets/js
 --- /MTRGEN ---
 
-document.addEventListener('<% event %>', function() {
-    var template = document.querySelector('#<% id="myId" %>');
+document.addEventListener('<% $event %>', function() {
+    var template = document.querySelector('#<% $id="myId" %>');
     var templateContent = template.content;
-    template.classList.add('<% classes="TEMPLATE"|lower %>');
+    template.classList.add('<% $classes="TEMPLATE"|lower %>');
     var clone = document.importNode(templateContent, true);
     document.body.appendChild(clone);
 });
@@ -61,7 +61,7 @@ class HelloCommand extends BaseGeneratorCommand
 
 const HEADER_DEFAULTS_TEMPLATE = `--- MTRGEN ---
 name: defaults-template
-filename: <% name %>.js
+filename: <% $name %>.js
 path: assets/js
 defaults:
     name: MyTemplate
@@ -73,21 +73,21 @@ defaults:
     cond3: "null"
 --- /MTRGEN ---
 
-document.addEventListener('<% event %>', function() {
-    // <% name|lower %>
-    var template = document.querySelector('#<% id="myId" %>');
+document.addEventListener('<% $event %>', function() {
+    // <% $name|lower %>
+    var template = document.querySelector('#<% $id="myId" %>');
     var templateContent = template.content;
-    template.classList.add('<% classes="TEMPLATE"|lower %>');
+    template.classList.add('<% $classes="TEMPLATE"|lower %>');
     var clone = document.importNode(templateContent, true);
     document.body.appendChild(clone);
     <% if $cond %>
-    console.log(<% cond %>);
+    console.log(<% $cond %>);
     <% endif %>
     <% if $cond2 %>
-    console.log(<% cond2 %>);
+    console.log(<% $cond2 %>);
     <% endif %>
     <% if $cond3 %>
-    console.log(<% cond3 %>);
+    console.log(<% $cond3 %>);
     <% endif %>
 });
 `;
@@ -106,8 +106,8 @@ const HEADER_DEFAULTS_TEMPLATE_PARSED = `document.addEventListener('DOMContentLo
 
 const COMPLEX_DEFAULTS_TEMPLATE = `--- MTRGEN ---
 name: complex-defaults
-filename: <% name="LocalFile" %>.js
-path: assets/<% meta.folder="inline-folder" %>
+filename: <% $name="LocalFile" %>.js
+path: assets/<% $meta.folder="inline-folder" %>
 defaults:
     name: "GlobalFile"
     branch: "elseif"
@@ -115,12 +115,12 @@ defaults:
     meta: {folder: "global-folder", nested: {enabled: true, label: 'lol'}}
 --- /MTRGEN ---
 
-name=<% name="LocalBody" %>
-folder=<% meta.folder %>
-label=<% meta.nested.label %>
-second=<% list[1] %>
-third=<% list[2] %>
-fourth=<% list[3] %>
+name=<% $name="LocalBody" %>
+folder=<% $meta.folder %>
+label=<% $meta.nested.label %>
+second=<% $list[1] %>
+third=<% $list[2] %>
+fourth=<% $list[3] %>
 <% if $branch === "if" %>IF<% elseif $branch === "elseif" %>ELSEIF<% else %>ELSE<% endif %>
 `;
 
@@ -137,7 +137,7 @@ describe("Generator", () => {
     it("parses template header", () => {
         const header = Generator.getTemplateHeader(TEST_TEMPLATE);
         expect(header.name).toBe("js-template");
-        expect(header.filename).toBe("<% name %>.js");
+        expect(header.filename).toBe("<% $name %>.js");
         expect(header.path).toBe("assets/js");
     });
 
@@ -166,7 +166,7 @@ describe("Generator", () => {
 
         const commandTemplate = `--- MTRGEN ---
 name: command
-filename: <% commandName|pascalCase %>Command.php
+filename: <% $commandName|pascalCase %>Command.php
 path: src/Mtrgen/Cli
 --- /MTRGEN ---
 
@@ -174,21 +174,21 @@ path: src/Mtrgen/Cli
 
 declare(strict_types=1);
 
-namespace Matronator\\Mtrgen<% namespace %>;
+namespace Matronator\\Mtrgen<% $namespace %>;
 
 use Matronator\\Parsem\\Parser;
 use Symfony\\Component\\Console\\Input\\InputArgument;
 use Symfony\\Component\\Console\\Input\\InputInterface;
 use Symfony\\Component\\Console\\Output\\OutputInterface;
 
-class <% commandName|pascalCase %>Command extends BaseGeneratorCommand
+class <% $commandName|pascalCase %>Command extends BaseGeneratorCommand
 {
-    protected static $defaultName = '<% commandName %>';
-    protected static $defaultDescription = '<% commandDescription %>';
+    protected static $defaultName = '<% $commandName %>';
+    protected static $defaultDescription = '<% $commandDescription %>';
 
     public function configure(): void
     {
-        $this->setAliases(['<% commandAliases %>']);
+        $this->setAliases(['<% $commandAliases %>']);
     }
 
     public function execute(InputInterface $input, OutputInterface $output): int

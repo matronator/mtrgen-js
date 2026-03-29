@@ -1,6 +1,6 @@
 {
   "name": "mtrgen",
-  "version": "1.0.3",
+  "version": "1.2.0",
   "description": "Template-driven file generator for Node.js with a reusable parser API and CLI.",
   "type": "module",
   "license": "MIT",

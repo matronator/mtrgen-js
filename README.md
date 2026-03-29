@@ -5,7 +5,7 @@
 ![Latest version](https://badgen.net/npm/v/mtrgen-js)
 ![License](https://badgen.net/npm/license/mtrgen-js)
 ![Dependencies](https://badgen.net/bundlephobia/dependency-count/mtrgen-js)
-![Monthly downloads](https://badgen.net/npm/dm/mtrgen-js)
+![Weekly downloads](https://badgen.net/npm/dw/mtrgen-js)
 
 #### [Official Website](https://mtrgen.matronator.cz) | [Documentation](https://mtrgen.matronator.cz/public/docs/) | [Template Repository](https://mtrgen.matronator.cz/repository) | [PHP version](https://github.com/matronator/MTRGen)
 
@@ -15,24 +15,58 @@ This is a port of the original PHP libraries [MTRGen](https://github.com/matrona
 
 Node.js 20 or newer is recommended for development, releases, and CLI usage.
 
+## Table of Contents
+
+- [MTRGen.js](#mtrgenjs)
+    - [Install](#install)
+    - [CLI](#cli)
+        - [Generate](#generate)
+        - [Template Store](#template-store)
+        - [Online Registry](#online-registry)
+    - [Template Format](#template-format)
+        - [Variables](#variables)
+            - [Default Value Precedence](#default-value-precedence)
+            - [Literals](#literals)
+            - [Filters](#filters)
+        - [Conditions](#conditions)
+        - [Loops](#loops)
+        - [Comments](#comments)
+    - [Library Usage](#library-usage)
+    - [Development](#development)
+
 ## Install
 
 Library:
 
 ```sh
-npm install mtrgen
+# NPM:
+npm i mtrgen-js
+# PNPM:
+pnpm i mtrgen-js
+# Bun:
+bun i mtrgen-js
 ```
 
 CLI:
 
 ```sh
-npm install --global mtrgen
+# NPM:
+npm i -g mtrgen-js
+# PNPM:
+pnpm i -g mtrgen-js
+# Bun:
+bun i -g mtrgen-js
 ```
 
 Or run it without a global install:
 
 ```sh
+# NPM:
 npx mtrgen generate ./templates/component.ts.mtr --arg name=Button
+# PNPM:
+pnpx mtrgen generate ./templates/component.ts.mtr --arg name=Button
+# Bun:
+bunx mtrgen generate ./templates/component.ts.mtr --arg name=Button
 ```
 
 ## CLI
@@ -154,8 +188,9 @@ Required header fields:
 Optional header fields:
 
 - `defaults`: global default values available to the filename, path, and template body.
+- `syntax`: template syntax version. Defaults to `2`.
 
-## Variables
+### Variables
 
 Variable tags use `<% ... %>`:
 
@@ -181,9 +216,9 @@ Lookup supports nested properties and array indexes:
 
 All variable lookups are `$`-prefixed by default. If you need the legacy bare-lookup behavior, you can opt a template into `syntax: 1` in its `MTRGEN` header.
 
-Plain objects are interpolated as JSON instead of `[object Object]`.
+Plain objects are interpolated as JSON.
 
-## Default Value Precedence
+#### Default Value Precedence
 
 When the same value exists in multiple places, precedence is:
 
@@ -191,7 +226,7 @@ When the same value exists in multiple places, precedence is:
 2. inline variable defaults like `<% $name="Button" %>`
 3. header defaults in the `defaults:` block
 
-## Literals
+#### Literals
 
 Template defaults and CLI values can use these literal forms:
 
@@ -204,7 +239,7 @@ Template defaults and CLI values can use these literal forms:
 
 Multiline arrays and objects are supported inside the header `defaults:` block.
 
-## Filters
+#### Filters
 
 Filters are chained with `|`:
 
@@ -232,15 +267,15 @@ Examples:
 <% $count|pow:2 %>
 ```
 
-## Conditions
+### Conditions
 
 Conditional blocks use `if`, `elseif`, `else`, and `endif`:
 
 ```txt
 <% if $enabled %>
-enabled
+    enabled
 <% else %>
-disabled
+    disabled
 <% endif %>
 ```
 
@@ -269,21 +304,21 @@ Example:
 
 ```txt
 <% if ($kind === "service" && $enabled) || !$fallback %>
-export class <% $name|pascalCase %>Service {}
+    export class <% $name|pascalCase %>Service {}
 <% elseif !$enabled %>
-// disabled
+    // disabled
 <% else %>
-export const <% $name %> = true;
+    export const <% $name %> = true;
 <% endif %>
 ```
 
-## Loops
+### Loops
 
 Loop blocks use `for` and `endfor`:
 
 ```txt
 <% for item of $items %>
-<% $item %>
+    <% $item %>
 <% endfor %>
 ```
 
@@ -300,9 +335,9 @@ Loop position blocks are also available inside `for` bodies:
 
 ```txt
 <% for item of $items %>
-<% first %>[<% endfirst %>
-<% $item %><% sep %>, <% endsep %>
-<% last %>]<% endlast %>
+    <% first %>[<% endfirst %>
+    <% $item %><% sep %>, <% endsep %>
+    <% last %>]<% endlast %>
 <% endfor %>
 ```
 
@@ -310,12 +345,12 @@ Loop position blocks are also available inside `for` bodies:
 
 ```txt
 <% for item of $items %>
-<% $item %>
-<% empty %>No items<% endempty %>
+    <% $item %>
+    <% empty %>No items<% endempty %>
 <% endfor %>
 ```
 
-## Comments
+### Comments
 
 Comments are removed from the final output:
 
@@ -328,7 +363,7 @@ Multiline comments are supported too.
 ## Library Usage
 
 ```ts
-import { Generator, Parser } from "mtrgen";
+import { Generator, Parser } from "mtrgen-js";
 
 const template = `--- MTRGEN ---
 name: component
@@ -349,7 +384,7 @@ console.log(Parser.parseString("Hello <% $name %>!", { name: "world" }));
 Generate from a template file and write it to disk:
 
 ```ts
-import { Generator } from "mtrgen";
+import { Generator } from "mtrgen-js";
 
 const files = Generator.parseAnyFile("./templates/component.ts.mtr", {
     name: "button",
@@ -361,48 +396,13 @@ Generator.writeFiles(files, {
 });
 ```
 
-## Publishing To npm
-
-This repository is already set up with [`np`](https://github.com/sindresorhus/np) for releases.
-
-Recommended release flow:
-
-```sh
-npm run build
-npm run test
-npm run pack:check
-npm run release:preview
-npm run release
-```
-
-What is configured:
-
-- `np` is installed as a dev dependency.
-- releases are expected from the `main` branch.
-- the publish-safe default test command is `vitest run`.
-- the package exposes the `mtrgen` binary through the `bin` field in `package.json`.
-
-After the package is published, users can run:
-
-```sh
-npm install --global mtrgen
-mtrgen generate ./template.mtr --arg name=Button
-```
-
-## CLI Package Options
-
-If you want to grow the CLI beyond the current lightweight built-in parser, these TypeScript-friendly packages are strong options:
-
-- `commander`: mature, very popular, built-in TypeScript types, great for classic subcommand CLIs.
-- `yargs`: powerful argument parsing and help generation, especially strong for larger option-heavy CLIs.
-- `citty`: modern lightweight builder from the UnJS ecosystem.
-- `clipanion`: strongly typed command classes and validation-oriented command design.
-
-For the current codebase, the shipped CLI is intentionally zero-dependency because the command surface is still small and the existing generator API is simple.
-
 ## Development
 
 ```sh
 npm run build
 npm run test
 ```
+
+## License
+
+[MIT](LICENSE)

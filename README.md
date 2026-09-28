@@ -7,7 +7,7 @@
 ![Dependencies](https://badgen.net/bundlephobia/dependency-count/mtrgen-js)
 ![Weekly downloads](https://badgen.net/npm/dw/mtrgen-js)
 
-#### [Official Website](https://mtrgen.matronator.cz) | [Documentation](https://mtrgen.matronator.cz/public/docs/) | [Template Repository](https://mtrgen.matronator.cz/repository) | [PHP version](https://github.com/matronator/MTRGen)
+#### [Official Website](https://mtrgen.matronator.cz) | [Documentation](https://mtrgen.matronator.cz/public/docs/) | [Template Repository](https://mtrgen.matronator.cz/repository) | [PHP version](https://github.com/matronator/MTRGen) | [VSCode Extension](https://marketplace.visualstudio.com/items?itemName=matronator.mtrgen-syntax)
 
 `mtrgen` is a template-driven file generator for Node.js and browser. It ships both as a TypeScript library and as a CLI so you can generate files from `.mtr` templates in code or directly from the terminal.
 
